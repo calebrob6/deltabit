@@ -1,0 +1,20 @@
+name: deltabit
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python>=3.10
+  - numpy
+  - xarray
+  - zarr
+  - rasterio
+  - affine
+  - pyproj
+  - s3fs
+  - scikit-learn
+  - mercantile
+  - mgrs
+  - pystac-client
+  - pip
+  - pip:
+      - rasterix

@@ -1,0 +1,5 @@
+tiles/
+__pycache__/
+*.pyc
+*.tif
+.github/copilot-instructions.md
