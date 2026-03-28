@@ -1,0 +1,1264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Interactive Embedding Viewer</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/geotiff@2.1.3/dist-browser/geotiff.js"></script>
+
+    <style>
+        /* leaflet-side-by-side CSS */
+        .leaflet-sbs {
+            position: absolute; top: 0; bottom: 0; left: 0; right: 0;
+            z-index: 999; pointer-events: none;
+        }
+        .leaflet-sbs-divider {
+            position: absolute; top: 0; bottom: 0; left: 50%; margin-left: -2px;
+            width: 4px; background-color: #fff; pointer-events: none;
+            z-index: 999; box-shadow: 0 0 6px rgba(0,0,0,0.4);
+        }
+        .leaflet-sbs-handle {
+            position: absolute; top: 50%; left: 50%;
+            width: 40px; height: 40px; margin-left: -20px; margin-top: -20px;
+            background: #fff; border: 1px solid #ddd; border-radius: 50%;
+            cursor: ew-resize; pointer-events: auto; z-index: 1000;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAFAAAABQCAMAAAC5zwKfAAAABlBMVEV9fX3///+Kct39AAAAAnRSTlP/AOW3MEoAAAA9SURBVFjD7dehDQAwDANBZ/+l2wmKoiqR7pHRcaeaCxAIBAL/g7k9JxAIBAKBQCAQCAQC14H+MhAIBE4CD3fOFvGVBzhZAAAAAElFTkSuQmCC");
+            background-position: 50% 50%; background-repeat: no-repeat; background-size: 40px 40px;
+        }
+        body.leaflet-sbs-dragging { cursor: ew-resize !important; user-select: none !important; }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }
+
+        #header {
+            position: fixed; top: 0; left: 0; width: 100%; z-index: 1100;
+            display: flex; justify-content: space-between; align-items: center;
+            background: #f0f0f0; height: 45px; padding: 0 20px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+        }
+        .header-col { font-size: 14px; font-weight: 600; color: #242424; }
+        .header-col.center { text-align: center; flex: 1; }
+        .header-col.right { text-align: right; }
+
+        #map { position: absolute; top: 45px; bottom: 0; width: 100%; }
+
+        .panel-label {
+            display: flex; flex-direction: column; padding: 12px 16px;
+            border-radius: 8px; background: #fff;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            pointer-events: auto; max-width: 280px;
+        }
+        .panel-label .title { font-size: 18px; font-weight: 600; color: #242424; }
+        .panel-label .subtitle { font-size: 13px; color: #616161; margin-top: 2px; }
+
+        .kbd-hint {
+            padding: 10px 16px; border-radius: 8px; background: #fff;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            font-size: 13px; color: #424242; line-height: 1.6; max-width: 360px;
+        }
+        .kbd-hint kbd {
+            display: inline-block; padding: 2px 7px; font-family: "Segoe UI", monospace;
+            font-size: 12px; background: #e8e8e8; border: 1px solid #ccc; border-radius: 4px;
+        }
+
+        .diff-control {
+            padding: 10px 14px; border-radius: 8px; background: #fff;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            font-size: 13px; color: #242424; user-select: none;
+        }
+        .diff-control label {
+            display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 500;
+        }
+        .diff-control input[type="checkbox"],
+        .diff-control input[type="radio"] {
+            width: 16px; height: 16px; cursor: pointer; accent-color: #0078d4;
+        }
+
+        /* ── Labeling panel ── */
+        .label-panel {
+            padding: 14px 16px; border-radius: 8px; background: #fff;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            font-size: 13px; color: #242424; pointer-events: auto; min-width: 280px;
+        }
+        .label-panel h3 {
+            font-size: 14px; font-weight: 700; margin: 0 0 10px 0;
+            display: flex; align-items: center; gap: 6px;
+        }
+        .label-panel .section-divider {
+            border: 0; border-top: 1px solid #e0e0e0; margin: 10px 0;
+        }
+        .label-btns { display: flex; gap: 8px; margin-bottom: 8px; }
+        .label-btn {
+            flex: 1; padding: 7px 10px; border: 2px solid #d0d0d0; border-radius: 6px;
+            background: #fafafa; cursor: pointer; font-size: 12px; font-weight: 600;
+            text-align: center; transition: all 0.15s;
+        }
+        .label-btn:hover { background: #f0f0f0; }
+        .label-btn.change { color: #15803d; }
+        .label-btn.change.active { border-color: #22c55e; background: #dcfce7; }
+        .label-btn.nochange { color: #b91c1c; }
+        .label-btn.nochange.active { border-color: #ef4444; background: #fee2e2; }
+
+        .sample-counts {
+            display: flex; gap: 16px; font-size: 12px; color: #616161; margin-bottom: 8px;
+        }
+        .sample-counts .dot {
+            display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px;
+        }
+        .train-row { display: flex; align-items: center; gap: 8px; }
+        .train-btn {
+            padding: 6px 14px; border: none; border-radius: 6px;
+            background: #3b82f6; color: #fff; font-size: 12px; font-weight: 600;
+            cursor: pointer; transition: background 0.15s;
+        }
+        .train-btn:hover:not(:disabled) { background: #2563eb; }
+        .train-btn:disabled { background: #93c5fd; cursor: not-allowed; }
+        .model-status { font-size: 11px; color: #9ca3af; }
+
+        .slider-row {
+            display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 12px;
+        }
+        .slider-row label { min-width: 65px; color: #616161; }
+        .slider-row input[type="range"] { flex: 1; accent-color: #3b82f6; }
+        .slider-row .slider-val { min-width: 32px; text-align: right; font-variant-numeric: tabular-nums; }
+
+        .display-mode-row { display: flex; gap: 6px; margin-top: 6px; }
+        .mode-btn {
+            padding: 4px 10px; border: 1px solid #d0d0d0; border-radius: 4px;
+            background: #fafafa; cursor: pointer; font-size: 11px; font-weight: 500;
+        }
+        .mode-btn.active { border-color: #3b82f6; background: #eff6ff; color: #2563eb; }
+
+        .clear-btn {
+            margin-top: 8px; padding: 5px 12px; border: 1px solid #d1d5db;
+            border-radius: 5px; background: #fff; cursor: pointer;
+            font-size: 11px; color: #6b7280; width: 100%;
+        }
+        .clear-btn:hover { background: #f9fafb; border-color: #9ca3af; }
+
+        .tile-url-row { margin-bottom: 8px; }
+        .tile-url-row input[type="text"] {
+            width: 100%; padding: 5px 8px; border: 1px solid #d0d0d0; border-radius: 4px;
+            font-size: 11px; margin-top: 4px;
+        }
+        .tile-url-row .load-btn {
+            margin-top: 4px; padding: 4px 12px; border: none; border-radius: 4px;
+            background: #0078d4; color: #fff; font-size: 11px; cursor: pointer;
+        }
+        .tile-url-row .load-btn:hover { background: #005a9e; }
+
+        .gpu-badge {
+            display: inline-block; padding: 1px 6px; border-radius: 3px;
+            font-size: 10px; font-weight: 600; margin-left: 6px;
+        }
+        .gpu-badge.available { background: #dcfce7; color: #15803d; }
+        .gpu-badge.unavailable { background: #f3f4f6; color: #9ca3af; }
+
+        .toast {
+            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+            padding: 10px 20px; border-radius: 8px; background: #1f2937; color: #fff;
+            font-size: 13px; z-index: 2000; opacity: 0; transition: opacity 0.3s;
+            pointer-events: none;
+        }
+        .toast.visible { opacity: 1; }
+    </style>
+</head>
+<body>
+
+<div id="header">
+    <div class="header-col">Interactive Embedding Viewer</div>
+    <div class="header-col center">Seattle — Sentinel-2 (2020 vs 2024)</div>
+    <div class="header-col right">Click to label · Train · Predict</div>
+</div>
+
+<div id="map"></div>
+<div id="toast" class="toast"></div>
+
+<script>
+// ── Inline leaflet-side-by-side plugin ──────────────────────────────
+(function () {
+    function asArray(arg) {
+        return (arg === 'undefined') ? [] : Array.isArray(arg) ? arg : [arg];
+    }
+    L.Control.SideBySide = L.Control.extend({
+        options: { thumbSize: 42, padding: 0 },
+        initialize: function (leftLayers, rightLayers, options) {
+            this.setLeftLayers(leftLayers);
+            this.setRightLayers(rightLayers);
+            L.setOptions(this, options);
+        },
+        getPosition: function () { return this._pos; },
+        setPosition: function () {},
+        includes: L.Evented.prototype || L.Mixin.Events,
+        addTo: function (map) {
+            this.remove();
+            this._map = map;
+            this._pos = map.getSize().x / 2;
+            var container = this._container = L.DomUtil.create('div', 'leaflet-sbs', map._controlContainer);
+            this._divider = L.DomUtil.create('div', 'leaflet-sbs-divider', container);
+            this._range = { value: 0.5 };
+            var handle = this._handle = L.DomUtil.create('div', 'leaflet-sbs-handle', container);
+            this._dragging = false;
+            var self = this;
+            function onDown(e) {
+                e.preventDefault(); e.stopPropagation();
+                self._dragging = true;
+                self._mapDragWasEnabled = map.dragging.enabled();
+                map.dragging.disable();
+                L.DomUtil.addClass(document.body, 'leaflet-sbs-dragging');
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
+                document.addEventListener('touchmove', onMove, { passive: false });
+                document.addEventListener('touchend', onUp);
+            }
+            function onMove(e) {
+                if (!self._dragging) return;
+                e.preventDefault();
+                var clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                var rect = map.getContainer().getBoundingClientRect();
+                var x = Math.max(0, Math.min(clientX - rect.left, rect.width));
+                self._pos = x;
+                self._range.value = x / rect.width;
+                self._updateClip();
+            }
+            function onUp() {
+                self._dragging = false;
+                if (self._mapDragWasEnabled) map.dragging.enable();
+                L.DomUtil.removeClass(document.body, 'leaflet-sbs-dragging');
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+                document.removeEventListener('touchmove', onMove);
+                document.removeEventListener('touchend', onUp);
+            }
+            handle.addEventListener('mousedown', onDown);
+            handle.addEventListener('touchstart', onDown, { passive: false });
+            this._onDown = onDown; this._onMove = onMove; this._onUp = onUp;
+            map.on('move', this._updateClip, this);
+            map.on('layeradd layerremove', this._updateLayers, this);
+            map.on('resize', function () {
+                self._pos = map.getSize().x * self._range.value;
+                self._updateClip();
+            });
+            this._updateLayers();
+            return this;
+        },
+        remove: function () {
+            if (!this._map) return this;
+            if (this._leftLayer) this._leftLayer.getContainer().style.clip = '';
+            if (this._rightLayer) this._rightLayer.getContainer().style.clip = '';
+            this._map.off('move', this._updateClip, this);
+            this._map.off('layeradd layerremove', this._updateLayers, this);
+            L.DomUtil.remove(this._container);
+            this._map = null;
+            return this;
+        },
+        setLeftLayers: function (l) { this._leftLayers = asArray(l); this._updateLayers(); return this; },
+        setRightLayers: function (r) { this._rightLayers = asArray(r); this._updateLayers(); return this; },
+        _updateClip: function () {
+            var map = this._map;
+            var nw = map.containerPointToLayerPoint([0, 0]);
+            var se = map.containerPointToLayerPoint(map.getSize());
+            var dividerX = this._pos;
+            var clipX = nw.x + dividerX;
+            this._divider.style.left = dividerX + 'px';
+            this._handle.style.left = dividerX + 'px';
+            this.fire('dividermove', { x: dividerX });
+            var clipLeft = 'rect(' + [nw.y, clipX, se.y, nw.x].join('px,') + 'px)';
+            var clipRight = 'rect(' + [nw.y, se.x, se.y, clipX].join('px,') + 'px)';
+            if (this._leftLayer) this._leftLayer.getContainer().style.clip = clipLeft;
+            if (this._rightLayer) this._rightLayer.getContainer().style.clip = clipRight;
+        },
+        _updateLayers: function () {
+            if (!this._map) return this;
+            var prevLeft = this._leftLayer, prevRight = this._rightLayer;
+            this._leftLayer = this._rightLayer = null;
+            this._leftLayers.forEach(function (l) { if (this._map.hasLayer(l)) this._leftLayer = l; }, this);
+            this._rightLayers.forEach(function (l) { if (this._map.hasLayer(l)) this._rightLayer = l; }, this);
+            if (prevLeft !== this._leftLayer) {
+                if (prevLeft) this.fire('leftlayerremove', { layer: prevLeft });
+                if (this._leftLayer) this.fire('leftlayeradd', { layer: this._leftLayer });
+            }
+            if (prevRight !== this._rightLayer) {
+                if (prevRight) this.fire('rightlayerremove', { layer: prevRight });
+                if (this._rightLayer) this.fire('rightlayeradd', { layer: this._rightLayer });
+            }
+            this._updateClip();
+        }
+    });
+    L.control.sideBySide = function (l, r, o) { return new L.Control.SideBySide(l, r, o); };
+})();
+</script>
+
+<script>
+// ── Configuration ───────────────────────────────────────────────────
+var urlParams = new URLSearchParams(window.location.search);
+var EMBEDDING_TILE_URL = urlParams.get('tiles') || 'https://geospatialvisualizer.z13.web.core.windows.net/tiles/aef_seattle_2024-2020_diff_tiles/{z}/{x}/{y}.tif';
+var EMB_MIN_ZOOM = parseInt(urlParams.get('minZoom')) || 8;
+var EMB_MAX_NATIVE_ZOOM = parseInt(urlParams.get('maxZoom')) || 14;
+
+// ── Utilities ───────────────────────────────────────────────────────
+function showToast(msg, duration) {
+    var el = document.getElementById('toast');
+    el.textContent = msg;
+    el.classList.add('visible');
+    clearTimeout(el._timer);
+    el._timer = setTimeout(function () { el.classList.remove('visible'); }, duration || 2500);
+}
+
+function sigmoid(x) {
+    if (x > 500) return 1;
+    if (x < -500) return 0;
+    return 1.0 / (1.0 + Math.exp(-x));
+}
+
+function heatmapColor(t) {
+    // Diverging blue → white → red
+    var r, g, b;
+    if (t < 0.5) {
+        var s = t * 2;
+        r = Math.round(s * 255);
+        g = Math.round(s * 255);
+        b = 255;
+    } else {
+        var s = (t - 0.5) * 2;
+        r = 255;
+        g = Math.round((1 - s) * 255);
+        b = Math.round((1 - s) * 255);
+    }
+    return [r, g, b];
+}
+
+// ── Linear model training ───────────────────────────────────────────
+function trainLogisticRegression(samples, epochs, lr, lambda) {
+    epochs = epochs || 300;
+    lr = lr || 0.5;
+    lambda = lambda || 0.01;
+
+    var n = samples.length;
+    var d = samples[0].embedding.length;
+
+    // Z-score normalization stats
+    var mean = new Float32Array(d);
+    var std = new Float32Array(d);
+    for (var j = 0; j < d; j++) {
+        var sum = 0, sum2 = 0;
+        for (var i = 0; i < n; i++) {
+            var v = samples[i].embedding[j];
+            sum += v;
+            sum2 += v * v;
+        }
+        mean[j] = sum / n;
+        var variance = sum2 / n - mean[j] * mean[j];
+        std[j] = variance > 1e-12 ? Math.sqrt(variance) : 1.0;
+    }
+
+    // SGD logistic regression on normalized features
+    var w = new Float32Array(d);
+    var bias = 0;
+    for (var epoch = 0; epoch < epochs; epoch++) {
+        for (var i = 0; i < n; i++) {
+            var x = samples[i].embedding;
+            var y = samples[i].label;
+            var z = bias;
+            for (var j = 0; j < d; j++) {
+                z += w[j] * (x[j] - mean[j]) / std[j];
+            }
+            var p = sigmoid(z);
+            var err = p - y;
+            for (var j = 0; j < d; j++) {
+                w[j] -= lr * (err * (x[j] - mean[j]) / std[j] + lambda * w[j]);
+            }
+            bias -= lr * err;
+        }
+        lr *= 0.995;
+    }
+
+    // Pre-compute absorbed normalization for fast inference:
+    // score = sigmoid(normW · raw_embedding + normBias)
+    var normW = new Float32Array(d);
+    var normBias = bias;
+    for (var j = 0; j < d; j++) {
+        normW[j] = w[j] / std[j];
+        normBias -= w[j] * mean[j] / std[j];
+    }
+
+    return { weights: w, bias: bias, mean: mean, std: std, normW: normW, normBias: normBias };
+}
+
+// ── WebGPU inference engine ─────────────────────────────────────────
+var gpuEngine = null;
+
+async function initWebGPU() {
+    if (!navigator.gpu) return null;
+    try {
+        var adapter = await navigator.gpu.requestAdapter();
+        if (!adapter) return null;
+        var device = await adapter.requestDevice();
+
+        var shaderModule = device.createShaderModule({ code: `
+            struct Params {
+                total_pixels: u32,
+                bands: u32,
+                bias: f32,
+                _pad: f32,
+            }
+            @group(0) @binding(0) var<storage, read> embeddings: array<f32>;
+            @group(0) @binding(1) var<storage, read> weights: array<f32>;
+            @group(0) @binding(2) var<uniform> params: Params;
+            @group(0) @binding(3) var<storage, read_write> output: array<f32>;
+
+            @compute @workgroup_size(256)
+            fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+                let idx = gid.x;
+                if (idx >= params.total_pixels) { return; }
+                var z: f32 = params.bias;
+                for (var b: u32 = 0u; b < params.bands; b = b + 1u) {
+                    z = z + weights[b] * embeddings[b * params.total_pixels + idx];
+                }
+                output[idx] = 1.0 / (1.0 + exp(-z));
+            }
+        ` });
+
+        var pipeline = device.createComputePipeline({
+            layout: 'auto',
+            compute: { module: shaderModule, entryPoint: 'main' }
+        });
+
+        return { device: device, pipeline: pipeline };
+    } catch (e) {
+        console.warn('WebGPU init failed:', e);
+        return null;
+    }
+}
+
+async function gpuInference(engine, embeddingData, totalPixels, bands, normW, normBias) {
+    var device = engine.device;
+
+    var embBuf = device.createBuffer({
+        size: embeddingData.byteLength,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+    });
+    device.queue.writeBuffer(embBuf, 0, embeddingData);
+
+    var wBuf = device.createBuffer({
+        size: normW.byteLength,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+    });
+    device.queue.writeBuffer(wBuf, 0, normW);
+
+    var paramData = new ArrayBuffer(16);
+    new Uint32Array(paramData, 0, 2).set([totalPixels, bands]);
+    new Float32Array(paramData, 8, 2).set([normBias, 0]);
+    var paramBuf = device.createBuffer({
+        size: 16,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    });
+    device.queue.writeBuffer(paramBuf, 0, paramData);
+
+    var outBuf = device.createBuffer({
+        size: totalPixels * 4,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
+    });
+    var readBuf = device.createBuffer({
+        size: totalPixels * 4,
+        usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
+    });
+
+    var bindGroup = device.createBindGroup({
+        layout: engine.pipeline.getBindGroupLayout(0),
+        entries: [
+            { binding: 0, resource: { buffer: embBuf } },
+            { binding: 1, resource: { buffer: wBuf } },
+            { binding: 2, resource: { buffer: paramBuf } },
+            { binding: 3, resource: { buffer: outBuf } }
+        ]
+    });
+
+    var enc = device.createCommandEncoder();
+    var pass = enc.beginComputePass();
+    pass.setPipeline(engine.pipeline);
+    pass.setBindGroup(0, bindGroup);
+    pass.dispatchWorkgroups(Math.ceil(totalPixels / 256));
+    pass.end();
+    enc.copyBufferToBuffer(outBuf, 0, readBuf, 0, totalPixels * 4);
+    device.queue.submit([enc.finish()]);
+
+    await readBuf.mapAsync(GPUMapMode.READ);
+    var result = new Float32Array(readBuf.getMappedRange().slice(0));
+    readBuf.unmap();
+
+    embBuf.destroy(); wBuf.destroy(); paramBuf.destroy();
+    outBuf.destroy(); readBuf.destroy();
+    return result;
+}
+
+function cpuInference(embeddingData, totalPixels, bands, normW, normBias) {
+    var scores = new Float32Array(totalPixels);
+    for (var i = 0; i < totalPixels; i++) {
+        var z = normBias;
+        for (var b = 0; b < bands; b++) {
+            z += normW[b] * embeddingData[b * totalPixels + i];
+        }
+        scores[i] = sigmoid(z);
+    }
+    return scores;
+}
+
+// ── GeoTIFF Embedding Layer ─────────────────────────────────────────
+L.GridLayer.Embedding = L.GridLayer.extend({
+    initialize: function (urlTemplate, options) {
+        this._urlTemplate = urlTemplate;
+        this._embCache = new Map();
+        this._bandCount = null;
+        this._model = null;
+        this._displayMode = 'off';
+        this._threshold = 0.5;
+        this._overlayOpacity = 0.7;
+        this._tileCanvases = new Map();
+        L.setOptions(this, options);
+    },
+
+    onAdd: function (map) {
+        L.GridLayer.prototype.onAdd.call(this, map);
+        if (this.getContainer()) {
+            this.getContainer().style.pointerEvents = 'none';
+        }
+    },
+
+    setModel: function (model) {
+        this._model = model;
+        this._rerenderAll();
+    },
+
+    setDisplayMode: function (mode) {
+        this._displayMode = mode;
+        this._rerenderAll();
+    },
+
+    setThreshold: function (t) {
+        this._threshold = t;
+        this._rerenderAll();
+    },
+
+    setOverlayOpacity: function (o) {
+        this._overlayOpacity = o;
+        this._rerenderAll();
+    },
+
+    createTile: function (coords, done) {
+        var canvas = document.createElement('canvas');
+        var tileSize = this.getTileSize();
+        canvas.width = tileSize.x;
+        canvas.height = tileSize.y;
+
+        var key = coords.z + '/' + coords.x + '/' + coords.y;
+        this._tileCanvases.set(key, canvas);
+        var self = this;
+
+        if (!this._urlTemplate) {
+            done(null, canvas);
+            return canvas;
+        }
+
+        var url = this._urlTemplate
+            .replace('{z}', coords.z)
+            .replace('{x}', coords.x)
+            .replace('{y}', coords.y);
+
+        fetch(url)
+            .then(function (r) {
+                if (!r.ok) throw { silent: r.status === 404 };
+                return r.arrayBuffer();
+            })
+            .then(function (buf) { return GeoTIFF.fromArrayBuffer(buf); })
+            .then(function (tiff) { return tiff.getImage(); })
+            .then(function (image) {
+                var w = image.getWidth();
+                var h = image.getHeight();
+                var bands = image.getSamplesPerPixel();
+                if (!self._bandCount) {
+                    self._bandCount = bands;
+                    self.fire('bandcount', { bands: bands });
+                }
+                return image.readRasters().then(function (rasters) {
+                    return { w: w, h: h, bands: bands, rasters: rasters };
+                });
+            })
+            .then(function (result) {
+                // Store as band-sequential: data[band * w * h + y * w + x]
+                var total = result.w * result.h;
+                var data = new Float32Array(result.bands * total);
+                for (var b = 0; b < result.bands; b++) {
+                    var src = result.rasters[b];
+                    var off = b * total;
+                    for (var i = 0; i < total; i++) {
+                        data[off + i] = src[i];
+                    }
+                }
+                self._embCache.set(key, {
+                    data: data, width: result.w, height: result.h, bands: result.bands
+                });
+                self.fire('tileloaded', { key: key });
+                self._renderTile(canvas, key);
+                done(null, canvas);
+            })
+            .catch(function (err) {
+                if (!err || !err.silent) console.warn('Embedding tile load error:', key, err);
+                done(null, canvas);
+            });
+
+        return canvas;
+    },
+
+    _removeTile: function (leafletKey) {
+        var tile = this._tiles[leafletKey];
+        if (tile && tile.coords) {
+            var key = tile.coords.z + '/' + tile.coords.x + '/' + tile.coords.y;
+            this._embCache.delete(key);
+            this._tileCanvases.delete(key);
+        }
+        L.GridLayer.prototype._removeTile.call(this, leafletKey);
+    },
+
+    _renderTile: function (canvas, key) {
+        var ctx = canvas.getContext('2d');
+        var tileSize = this.getTileSize();
+        ctx.clearRect(0, 0, tileSize.x, tileSize.y);
+
+        if (!this._model || this._displayMode === 'off') return;
+
+        var cached = this._embCache.get(key);
+        if (!cached) return;
+
+        var totalPixels = cached.width * cached.height;
+        var scores;
+
+        if (gpuEngine && totalPixels * cached.bands > 10000) {
+            // GPU path handled async in _rerenderAll; for createTile, use CPU
+            scores = cpuInference(cached.data, totalPixels, cached.bands,
+                this._model.normW, this._model.normBias);
+        } else {
+            scores = cpuInference(cached.data, totalPixels, cached.bands,
+                this._model.normW, this._model.normBias);
+        }
+
+        this._drawScores(canvas, cached.width, cached.height, scores);
+    },
+
+    _drawScores: function (canvas, dataW, dataH, scores) {
+        var tileSize = this.getTileSize();
+        var offscreen = document.createElement('canvas');
+        offscreen.width = dataW;
+        offscreen.height = dataH;
+        var octx = offscreen.getContext('2d');
+        var imgData = octx.createImageData(dataW, dataH);
+        var px = imgData.data;
+        var alpha = Math.round(this._overlayOpacity * 255);
+
+        for (var i = 0; i < scores.length; i++) {
+            var s = scores[i];
+            var pi = i * 4;
+
+            if (this._displayMode === 'heatmap') {
+                var rgb = heatmapColor(s);
+                px[pi] = rgb[0]; px[pi + 1] = rgb[1]; px[pi + 2] = rgb[2];
+                px[pi + 3] = alpha;
+            } else if (this._displayMode === 'binary') {
+                if (s >= this._threshold) {
+                    px[pi] = 255; px[pi + 1] = 50; px[pi + 2] = 50; px[pi + 3] = alpha;
+                } else {
+                    px[pi + 3] = 0;
+                }
+            }
+        }
+
+        octx.putImageData(imgData, 0, 0);
+        var ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, tileSize.x, tileSize.y);
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(offscreen, 0, 0, tileSize.x, tileSize.y);
+    },
+
+    _rerenderAll: function () {
+        var self = this;
+        var tileSize = this.getTileSize();
+
+        // If GPU is available and model is set, use GPU for batch inference
+        if (gpuEngine && this._model && this._displayMode !== 'off') {
+            var keys = Array.from(this._embCache.keys());
+            var chain = Promise.resolve();
+            keys.forEach(function (key) {
+                chain = chain.then(function () {
+                    var cached = self._embCache.get(key);
+                    var canvas = self._tileCanvases.get(key);
+                    if (!cached || !canvas) return;
+                    var totalPixels = cached.width * cached.height;
+                    return gpuInference(gpuEngine, cached.data, totalPixels, cached.bands,
+                        self._model.normW, self._model.normBias
+                    ).then(function (scores) {
+                        self._drawScores(canvas, cached.width, cached.height, scores);
+                    });
+                });
+            });
+            chain.catch(function (err) {
+                console.warn('GPU inference failed, falling back to CPU:', err);
+                self._rerenderAllCPU();
+            });
+        } else {
+            this._rerenderAllCPU();
+        }
+    },
+
+    _rerenderAllCPU: function () {
+        for (var key in this._tiles) {
+            var tile = this._tiles[key];
+            if (tile && tile.coords) {
+                var cacheKey = tile.coords.z + '/' + tile.coords.x + '/' + tile.coords.y;
+                this._renderTile(tile.el, cacheKey);
+            }
+        }
+    },
+
+    getEmbeddingAt: function (latlng) {
+        if (!this._map) return null;
+        var mapZoom = Math.floor(this._map.getZoom());
+        var nativeZoom = Math.min(mapZoom, this.options.maxNativeZoom || mapZoom);
+        var tileSize = this.getTileSize();
+        var point = this._map.project(latlng, nativeZoom);
+        var tileX = Math.floor(point.x / tileSize.x);
+        var tileY = Math.floor(point.y / tileSize.y);
+        var key = nativeZoom + '/' + tileX + '/' + tileY;
+        var cached = this._embCache.get(key);
+        if (!cached) return null;
+
+        var px = point.x - tileX * tileSize.x;
+        var py = point.y - tileY * tileSize.y;
+        var sx = Math.floor(px * cached.width / tileSize.x);
+        var sy = Math.floor(py * cached.height / tileSize.y);
+        sx = Math.max(0, Math.min(sx, cached.width - 1));
+        sy = Math.max(0, Math.min(sy, cached.height - 1));
+
+        var embedding = new Float32Array(cached.bands);
+        var idx = sy * cached.width + sx;
+        for (var b = 0; b < cached.bands; b++) {
+            embedding[b] = cached.data[b * cached.width * cached.height + idx];
+        }
+        return embedding;
+    },
+
+    getCacheSize: function () {
+        return this._embCache.size;
+    }
+});
+
+// ── Tile layers ─────────────────────────────────────────────────────
+var bounds = [[46.856640, -123.000267], [47.853702, -121.532723]];
+
+var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap', minZoom: 6, maxZoom: 18
+});
+
+var imagery2020 = L.tileLayer('https://geospatialvisualizer.z13.web.core.windows.net/tiles/s2_20200828_seattle_tiles/{z}/{x}/{y}.png', {
+    tms: false, minZoom: 8, maxNativeZoom: 14, maxZoom: 18,
+    bounds: bounds, attribution: 'Sentinel-2 2020-08-28'
+});
+
+var imagery2024 = L.tileLayer('https://geospatialvisualizer.z13.web.core.windows.net/tiles/s2_20240720_seattle_tiles/{z}/{x}/{y}.png', {
+    tms: false, minZoom: 8, maxNativeZoom: 14, maxZoom: 18,
+    bounds: bounds, attribution: 'Sentinel-2 2024-07-20'
+});
+
+var diffLayer = L.tileLayer('https://geospatialvisualizer.z13.web.core.windows.net/tiles/aef_diff_pca3_seattle_tiles/{z}/{x}/{y}.png', {
+    tms: false, minZoom: 8, maxNativeZoom: 14, maxZoom: 18,
+    bounds: bounds, opacity: 0.85, attribution: 'AEF Diff PCA-3'
+});
+
+var diffUrbanLayer = L.tileLayer('https://geospatialvisualizer.z13.web.core.windows.net/tiles/aef_diff_pca3_seattle_urbandiff_tiles/{z}/{x}/{y}.png', {
+    tms: false, minZoom: 8, maxNativeZoom: 14, maxZoom: 18,
+    bounds: bounds, opacity: 0.85, attribution: 'AEF Diff PCA-3 (urban diff)'
+});
+
+// ── Map ─────────────────────────────────────────────────────────────
+var map = L.map('map', {
+    center: [47.355, -122.267], zoom: 10,
+    minZoom: 6, maxZoom: 18, zoomControl: false,
+    layers: [osm, imagery2020, imagery2024]
+});
+
+// Inference pane sits above tiles but below markers
+map.createPane('inferencePane');
+map.getPane('inferencePane').style.zIndex = 450;
+
+// ── Embedding layer ─────────────────────────────────────────────────
+var embeddingLayer = null;
+
+function loadEmbeddingTiles(url) {
+    if (embeddingLayer) {
+        map.removeLayer(embeddingLayer);
+    }
+    EMBEDDING_TILE_URL = url;
+    embeddingLayer = new L.GridLayer.Embedding(url, {
+        pane: 'inferencePane',
+        tms: false,
+        minZoom: EMB_MIN_ZOOM,
+        maxNativeZoom: EMB_MAX_NATIVE_ZOOM,
+        maxZoom: 18,
+        bounds: bounds
+    });
+    embeddingLayer.addTo(map);
+    embeddingLayer.on('bandcount', function (e) {
+        showToast('Detected ' + e.bands + '-band embedding tiles');
+    });
+    embeddingLayer.on('tileloaded', updateTileCount);
+    updateUI();
+}
+
+// ── Side-by-side swipe ──────────────────────────────────────────────
+var sideBySide = L.control.sideBySide(imagery2020, imagery2024).addTo(map);
+
+// ── Standard controls ───────────────────────────────────────────────
+
+var leftLabel = L.control({ position: 'topleft' });
+leftLabel.onAdd = function () {
+    var div = L.DomUtil.create('div', 'panel-label');
+    div.innerHTML = '<span class="title">2020-08-28</span><span class="subtitle">Sentinel-2 TCI (pre)</span>';
+    return div;
+};
+leftLabel.addTo(map);
+
+var rightLabel = L.control({ position: 'topright' });
+rightLabel.onAdd = function () {
+    var div = L.DomUtil.create('div', 'panel-label');
+    div.innerHTML = '<span class="title">2024-07-20</span><span class="subtitle">Sentinel-2 TCI (post)</span>';
+    return div;
+};
+rightLabel.addTo(map);
+
+L.control.zoom({ position: 'topright' }).addTo(map);
+
+// ── Labeling state ──────────────────────────────────────────────────
+var samples = [];
+var activeClass = null; // 'change' | 'nochange' | null
+var currentModel = null;
+var markerGroup = L.layerGroup().addTo(map);
+
+// ── Labeling control panel ──────────────────────────────────────────
+var labelControl = L.control({ position: 'topleft' });
+labelControl.onAdd = function () {
+    var div = L.DomUtil.create('div', 'label-panel');
+    L.DomEvent.disableClickPropagation(div);
+    L.DomEvent.disableScrollPropagation(div);
+
+    div.innerHTML = [
+        '<h3>🏷️ Labeling <span id="gpu-badge" class="gpu-badge unavailable">CPU</span></h3>',
+
+        '<div class="tile-url-row" id="tile-url-row">',
+        '  <label style="font-size:11px;color:#616161">Embedding tile URL template:</label>',
+        '  <input type="text" id="tile-url-input" placeholder="https://.../{z}/{x}/{y}.tif" />',
+        '  <button class="load-btn" id="load-tiles-btn">Load Tiles</button>',
+        '</div>',
+
+        '<div id="tile-count" style="font-size:11px;color:#9ca3af;margin-bottom:6px"></div>',
+
+        '<div class="label-btns">',
+        '  <div class="label-btn change" id="btn-change">● Change</div>',
+        '  <div class="label-btn nochange" id="btn-nochange">● No Change</div>',
+        '</div>',
+
+        '<div class="sample-counts">',
+        '  <span><span class="dot" style="background:#22c55e"></span>Change: <b id="count-change">0</b></span>',
+        '  <span><span class="dot" style="background:#ef4444"></span>No Change: <b id="count-nochange">0</b></span>',
+        '</div>',
+
+        '<div class="train-row">',
+        '  <button class="train-btn" id="train-btn" disabled>Train Model</button>',
+        '  <span class="model-status" id="model-status">Not trained</span>',
+        '</div>',
+
+        '<hr class="section-divider">',
+        '<div style="font-size:12px;font-weight:600;margin-bottom:6px">Inference Display</div>',
+
+        '<div class="display-mode-row">',
+        '  <div class="mode-btn" id="mode-off" data-mode="off">Off</div>',
+        '  <div class="mode-btn" id="mode-heatmap" data-mode="heatmap">Heatmap</div>',
+        '  <div class="mode-btn" id="mode-binary" data-mode="binary">Binary</div>',
+        '</div>',
+
+        '<div class="slider-row" id="threshold-row" style="display:none">',
+        '  <label>Threshold</label>',
+        '  <input type="range" id="threshold-slider" min="0" max="100" value="50" />',
+        '  <span class="slider-val" id="threshold-val">0.50</span>',
+        '</div>',
+
+        '<div class="slider-row">',
+        '  <label>Opacity</label>',
+        '  <input type="range" id="opacity-slider" min="0" max="100" value="70" />',
+        '  <span class="slider-val" id="opacity-val">0.70</span>',
+        '</div>',
+
+        '<button class="clear-btn" id="clear-btn">Clear All Labels</button>'
+    ].join('\n');
+
+    return div;
+};
+labelControl.addTo(map);
+
+// ── Wire up UI elements ─────────────────────────────────────────────
+var btnChange = document.getElementById('btn-change');
+var btnNochange = document.getElementById('btn-nochange');
+var trainBtn = document.getElementById('train-btn');
+var clearBtn = document.getElementById('clear-btn');
+var countChange = document.getElementById('count-change');
+var countNochange = document.getElementById('count-nochange');
+var modelStatusEl = document.getElementById('model-status');
+var thresholdSlider = document.getElementById('threshold-slider');
+var thresholdVal = document.getElementById('threshold-val');
+var thresholdRow = document.getElementById('threshold-row');
+var opacitySlider = document.getElementById('opacity-slider');
+var opacityVal = document.getElementById('opacity-val');
+var tileUrlInput = document.getElementById('tile-url-input');
+var loadTilesBtn = document.getElementById('load-tiles-btn');
+var tileUrlRow = document.getElementById('tile-url-row');
+var tileCountEl = document.getElementById('tile-count');
+var gpuBadge = document.getElementById('gpu-badge');
+
+// Class selection buttons
+btnChange.addEventListener('click', function () {
+    activeClass = (activeClass === 'change') ? null : 'change';
+    updateUI();
+});
+btnNochange.addEventListener('click', function () {
+    activeClass = (activeClass === 'nochange') ? null : 'nochange';
+    updateUI();
+});
+
+// Mode buttons
+document.querySelectorAll('.mode-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+        var mode = this.getAttribute('data-mode');
+        if (embeddingLayer) {
+            embeddingLayer.setDisplayMode(mode);
+        }
+        thresholdRow.style.display = (mode === 'binary') ? 'flex' : 'none';
+        updateModeButtons(mode);
+    });
+});
+
+function updateModeButtons(active) {
+    document.querySelectorAll('.mode-btn').forEach(function (btn) {
+        btn.classList.toggle('active', btn.getAttribute('data-mode') === active);
+    });
+}
+updateModeButtons('off');
+
+// Threshold slider
+thresholdSlider.addEventListener('input', function () {
+    var t = this.value / 100;
+    thresholdVal.textContent = t.toFixed(2);
+    if (embeddingLayer) embeddingLayer.setThreshold(t);
+});
+
+// Opacity slider
+opacitySlider.addEventListener('input', function () {
+    var o = this.value / 100;
+    opacityVal.textContent = o.toFixed(2);
+    if (embeddingLayer) embeddingLayer.setOverlayOpacity(o);
+});
+
+// Tile URL loader
+if (EMBEDDING_TILE_URL) {
+    tileUrlInput.value = EMBEDDING_TILE_URL;
+    tileUrlRow.style.display = 'none';
+}
+loadTilesBtn.addEventListener('click', function () {
+    var url = tileUrlInput.value.trim();
+    if (!url) { showToast('Please enter a tile URL'); return; }
+    loadEmbeddingTiles(url);
+    tileUrlRow.style.display = 'none';
+    showToast('Loading embedding tiles…');
+});
+
+// Train button
+trainBtn.addEventListener('click', doTrain);
+
+// Clear button
+clearBtn.addEventListener('click', function () {
+    samples = [];
+    markerGroup.clearLayers();
+    currentModel = null;
+    if (embeddingLayer) {
+        embeddingLayer.setModel(null);
+        embeddingLayer.setDisplayMode('off');
+    }
+    updateModeButtons('off');
+    thresholdRow.style.display = 'none';
+    updateUI();
+    showToast('Labels cleared');
+});
+
+function updateUI() {
+    // Button states
+    btnChange.classList.toggle('active', activeClass === 'change');
+    btnNochange.classList.toggle('active', activeClass === 'nochange');
+
+    // Cursor
+    map.getContainer().style.cursor = activeClass ? 'crosshair' : '';
+
+    // Counts
+    var nChange = samples.filter(function (s) { return s.label === 1; }).length;
+    var nNochange = samples.filter(function (s) { return s.label === 0; }).length;
+    countChange.textContent = nChange;
+    countNochange.textContent = nNochange;
+
+    // Train button
+    trainBtn.disabled = (nChange < 1 || nNochange < 1);
+
+    // Model status
+    if (currentModel) {
+        modelStatusEl.textContent = 'Trained (' + samples.length + ' samples)';
+        modelStatusEl.style.color = '#15803d';
+    } else {
+        modelStatusEl.textContent = 'Not trained';
+        modelStatusEl.style.color = '#9ca3af';
+    }
+}
+
+function updateTileCount() {
+    if (embeddingLayer) {
+        tileCountEl.textContent = 'Embedding tiles cached: ' + embeddingLayer.getCacheSize();
+    }
+}
+
+// ── Click-to-label ──────────────────────────────────────────────────
+map.on('click', function (e) {
+    if (!activeClass) return;
+    if (!embeddingLayer) {
+        showToast('Load embedding tiles first');
+        return;
+    }
+
+    var embedding = embeddingLayer.getEmbeddingAt(e.latlng);
+    if (!embedding) {
+        showToast('No embedding data at this location');
+        return;
+    }
+
+    // Check for all-zero embedding (likely nodata)
+    var allZero = true;
+    for (var i = 0; i < embedding.length; i++) {
+        if (embedding[i] !== 0) { allZero = false; break; }
+    }
+    if (allZero) {
+        showToast('No embedding data at this location (all zeros)');
+        return;
+    }
+
+    var label = activeClass === 'change' ? 1 : 0;
+    var color = label === 1 ? '#22c55e' : '#ef4444';
+
+    var marker = L.circleMarker(e.latlng, {
+        radius: 7, fillColor: color, color: '#fff',
+        weight: 2, fillOpacity: 0.9
+    });
+    marker.addTo(markerGroup);
+
+    var sample = { latlng: e.latlng, embedding: embedding, label: label, marker: marker };
+    samples.push(sample);
+
+    // Right-click to remove
+    marker.on('contextmenu', function (ev) {
+        L.DomEvent.stopPropagation(ev);
+        var idx = samples.indexOf(sample);
+        if (idx >= 0) samples.splice(idx, 1);
+        markerGroup.removeLayer(marker);
+        updateUI();
+    });
+
+    updateUI();
+});
+
+// Prevent map context menu
+map.on('contextmenu', function (e) { L.DomEvent.stopPropagation(e); });
+
+// ── Training ────────────────────────────────────────────────────────
+function doTrain() {
+    if (samples.length < 2) return;
+    var nChange = samples.filter(function (s) { return s.label === 1; }).length;
+    var nNochange = samples.filter(function (s) { return s.label === 0; }).length;
+    if (nChange < 1 || nNochange < 1) {
+        showToast('Need at least 1 sample of each class');
+        return;
+    }
+
+    modelStatusEl.textContent = 'Training…';
+    modelStatusEl.style.color = '#b45309';
+    trainBtn.disabled = true;
+
+    // Yield to UI, then train
+    setTimeout(function () {
+        var t0 = performance.now();
+        currentModel = trainLogisticRegression(samples);
+        var elapsed = (performance.now() - t0).toFixed(0);
+
+        if (embeddingLayer) {
+            embeddingLayer.setModel(currentModel);
+            // Auto-show heatmap if not already showing
+            if (embeddingLayer._displayMode === 'off') {
+                embeddingLayer.setDisplayMode('heatmap');
+                updateModeButtons('heatmap');
+            }
+        }
+
+        updateUI();
+        showToast('Model trained in ' + elapsed + 'ms (' + samples.length + ' samples)');
+    }, 10);
+}
+
+// ── Diff overlay controls ───────────────────────────────────────────
+var overlayLayers = { full: diffLayer, urban: diffUrbanLayer };
+var selectedOverlay = 'full';
+var overlayVisible = false;
+
+var diffControl = L.control({ position: 'bottomright' });
+diffControl.onAdd = function () {
+    var div = L.DomUtil.create('div', 'diff-control');
+    div.innerHTML = [
+        '<label><input type="checkbox" id="overlay-toggle"> Show diff overlay</label>',
+        '<hr style="margin:6px 0;border:0;border-top:1px solid #e0e0e0">',
+        '<label><input type="radio" name="overlay" value="full" checked> Full tile</label>',
+        '<label style="margin-top:4px"><input type="radio" name="overlay" value="urban"> Urban diff</label>'
+    ].join('');
+    L.DomEvent.disableClickPropagation(div);
+    return div;
+};
+diffControl.addTo(map);
+
+var overlayToggle = document.getElementById('overlay-toggle');
+var radioButtons = document.querySelectorAll('input[name="overlay"]');
+
+function showOverlay() {
+    overlayLayers[selectedOverlay].addTo(map);
+    overlayVisible = true;
+    overlayToggle.checked = true;
+}
+function hideOverlay() {
+    Object.keys(overlayLayers).forEach(function (k) {
+        if (map.hasLayer(overlayLayers[k])) map.removeLayer(overlayLayers[k]);
+    });
+    overlayVisible = false;
+    overlayToggle.checked = false;
+}
+function toggleDiff() {
+    if (overlayVisible) hideOverlay(); else showOverlay();
+}
+
+overlayToggle.addEventListener('change', function () {
+    if (this.checked) showOverlay(); else hideOverlay();
+});
+radioButtons.forEach(function (r) {
+    r.addEventListener('change', function () {
+        var was = overlayVisible;
+        hideOverlay();
+        selectedOverlay = this.value;
+        if (was) showOverlay();
+    });
+});
+
+// ── Keyboard hints ──────────────────────────────────────────────────
+var hintCtl = L.control({ position: 'bottomleft' });
+hintCtl.onAdd = function () {
+    var div = L.DomUtil.create('div', 'kbd-hint');
+    div.innerHTML = [
+        '<kbd>Space</kbd> Toggle diff overlay<br>',
+        '<kbd>A</kbd> Swipe → show 2020 &nbsp;',
+        '<kbd>D</kbd> Swipe → show 2024 &nbsp;',
+        '<kbd>S</kbd> Swipe → center<br>',
+        '<kbd>C</kbd> Label: Change &nbsp;',
+        '<kbd>N</kbd> Label: No Change &nbsp;',
+        '<kbd>Esc</kbd> Stop labeling<br>',
+        '<kbd>T</kbd> Toggle binary &nbsp;',
+        '<kbd>H</kbd> Toggle heatmap &nbsp;',
+        '<kbd>G</kbd> Train model'
+    ].join('');
+    return div;
+};
+hintCtl.addTo(map);
+
+// ── Keyboard shortcuts ──────────────────────────────────────────────
+document.addEventListener('keydown', function (e) {
+    // Don't trigger when typing in inputs
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+    var w = map.getSize().x;
+    var key = e.key.toLowerCase();
+
+    if (key === ' ') {
+        e.preventDefault();
+        toggleDiff();
+    } else if (key === 'a') {
+        sideBySide._range.value = 0.02;
+        sideBySide._pos = w * 0.02;
+        sideBySide._updateClip();
+    } else if (key === 'd') {
+        sideBySide._range.value = 0.98;
+        sideBySide._pos = w * 0.98;
+        sideBySide._updateClip();
+    } else if (key === 's') {
+        sideBySide._range.value = 0.5;
+        sideBySide._pos = w * 0.5;
+        sideBySide._updateClip();
+    } else if (key === 'c') {
+        activeClass = (activeClass === 'change') ? null : 'change';
+        updateUI();
+    } else if (key === 'n') {
+        activeClass = (activeClass === 'nochange') ? null : 'nochange';
+        updateUI();
+    } else if (key === 'escape') {
+        activeClass = null;
+        updateUI();
+    } else if (key === 't') {
+        if (embeddingLayer) {
+            var cur = embeddingLayer._displayMode;
+            var next = cur === 'binary' ? 'off' : 'binary';
+            embeddingLayer.setDisplayMode(next);
+            updateModeButtons(next);
+            thresholdRow.style.display = (next === 'binary') ? 'flex' : 'none';
+        }
+    } else if (key === 'h') {
+        if (embeddingLayer) {
+            var cur = embeddingLayer._displayMode;
+            var next = cur === 'heatmap' ? 'off' : 'heatmap';
+            embeddingLayer.setDisplayMode(next);
+            updateModeButtons(next);
+            thresholdRow.style.display = 'none';
+        }
+    } else if (key === 'g') {
+        doTrain();
+    }
+});
+
+// ── Init WebGPU ─────────────────────────────────────────────────────
+(async function () {
+    gpuEngine = await initWebGPU();
+    if (gpuEngine) {
+        gpuBadge.textContent = 'GPU';
+        gpuBadge.className = 'gpu-badge available';
+        console.log('WebGPU inference enabled');
+    } else {
+        gpuBadge.textContent = 'CPU';
+        gpuBadge.className = 'gpu-badge unavailable';
+        console.log('WebGPU not available, using CPU inference');
+    }
+})();
+
+// ── Load embedding tiles (after all UI is ready) ────────────────────
+if (EMBEDDING_TILE_URL) {
+    loadEmbeddingTiles(EMBEDDING_TILE_URL);
+}
+</script>
+</body>
+</html>

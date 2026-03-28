@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Seattle AEF Embedding Diff (2024 – 2020)</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <style>
+        /* leaflet-side-by-side CSS */
+        .leaflet-sbs {
+            position: absolute;
+            top: 0; bottom: 0; left: 0; right: 0;
+            z-index: 999;
+            pointer-events: none;
+        }
+        .leaflet-sbs-divider {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 50%;
+            margin-left: -2px;
+            width: 4px;
+            background-color: #fff;
+            pointer-events: none;
+            z-index: 999;
+            box-shadow: 0 0 6px rgba(0,0,0,0.4);
+        }
+        .leaflet-sbs-handle {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 40px;
+            height: 40px;
+            margin-left: -20px;
+            margin-top: -20px;
+            background: #fff;
+            border: 1px solid #ddd;
+            border-radius: 50%;
+            cursor: ew-resize;
+            pointer-events: auto;
+            z-index: 1000;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAFAAAABQCAMAAAC5zwKfAAAABlBMVEV9fX3///+Kct39AAAAAnRSTlP/AOW3MEoAAAA9SURBVFjD7dehDQAwDANBZ/+l2wmKoiqR7pHRcaeaCxAIBAL/g7k9JxAIBAKBQCAQCAQC14H+MhAIBE4CD3fOFvGVBzhZAAAAAElFTkSuQmCC");
+            background-position: 50% 50%;
+            background-repeat: no-repeat;
+            background-size: 40px 40px;
+        }
+        body.leaflet-sbs-dragging {
+            cursor: ew-resize !important;
+            user-select: none !important;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+        }
+
+        #header {
+            position: fixed;
+            top: 0; left: 0; width: 100%;
+            z-index: 1000;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #f0f0f0;
+            height: 45px;
+            padding: 0 20px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+        }
+
+        .header-col {
+            font-size: 14px;
+            font-weight: 600;
+            color: #242424;
+        }
+        .header-col.center { text-align: center; flex: 1; }
+        .header-col.right  { text-align: right; }
+
+        #map {
+            position: absolute;
+            top: 45px; bottom: 0;
+            width: 100%;
+        }
+
+        /* Side labels */
+        .panel-label {
+            display: flex;
+            flex-direction: column;
+            padding: 12px 16px;
+            border-radius: 8px;
+            background: #fff;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            pointer-events: auto;
+            max-width: 280px;
+        }
+        .panel-label .title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #242424;
+        }
+        .panel-label .subtitle {
+            font-size: 13px;
+            color: #616161;
+            margin-top: 2px;
+        }
+
+        /* Keyboard hint */
+        .kbd-hint {
+            padding: 10px 16px;
+            border-radius: 8px;
+            background: #fff;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            font-size: 13px;
+            color: #424242;
+            line-height: 1.6;
+            max-width: 320px;
+        }
+        .kbd-hint kbd {
+            display: inline-block;
+            padding: 2px 7px;
+            font-family: "Segoe UI", monospace;
+            font-size: 12px;
+            background: #e8e8e8;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+
+        /* Diff overlay control */
+        .diff-control {
+            padding: 10px 14px;
+            border-radius: 8px;
+            background: #fff;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            font-size: 13px;
+            color: #242424;
+            user-select: none;
+        }
+        .diff-control label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            font-weight: 500;
+        }
+        .diff-control input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+            accent-color: #0078d4;
+        }
+    </style>
+</head>
+<body>
+
+<div id="header">
+    <div class="header-col">Alpha Earth Embedding Diff</div>
+    <div class="header-col center">Seattle — Sentinel-2 (2020 vs 2024)</div>
+    <div class="header-col right">PCA-3 of Δ Embeddings</div>
+</div>
+
+<div id="map"></div>
+
+<script>
+// ── Inline leaflet-side-by-side plugin (custom drag implementation) ──
+(function () {
+    function asArray(arg) {
+        return (arg === 'undefined') ? [] : Array.isArray(arg) ? arg : [arg];
+    }
+
+    L.Control.SideBySide = L.Control.extend({
+        options: { thumbSize: 42, padding: 0 },
+        initialize: function (leftLayers, rightLayers, options) {
+            this.setLeftLayers(leftLayers);
+            this.setRightLayers(rightLayers);
+            L.setOptions(this, options);
+        },
+        getPosition: function () {
+            return this._pos;
+        },
+        setPosition: function () {},
+        includes: L.Evented.prototype || L.Mixin.Events,
+        addTo: function (map) {
+            this.remove();
+            this._map = map;
+            this._pos = map.getSize().x / 2;
+
+            var container = this._container = L.DomUtil.create('div', 'leaflet-sbs', map._controlContainer);
+            this._divider = L.DomUtil.create('div', 'leaflet-sbs-divider', container);
+
+            // Hidden range for programmatic access (A/D/S keys)
+            this._range = { value: 0.5 };
+
+            // Drag handle
+            var handle = this._handle = L.DomUtil.create('div', 'leaflet-sbs-handle', container);
+
+            this._dragging = false;
+            var self = this;
+
+            function onDown(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                self._dragging = true;
+                self._mapDragWasEnabled = map.dragging.enabled();
+                map.dragging.disable();
+                L.DomUtil.addClass(document.body, 'leaflet-sbs-dragging');
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
+                document.addEventListener('touchmove', onMove, { passive: false });
+                document.addEventListener('touchend', onUp);
+            }
+
+            function onMove(e) {
+                if (!self._dragging) return;
+                e.preventDefault();
+                var clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                var rect = map.getContainer().getBoundingClientRect();
+                var x = Math.max(0, Math.min(clientX - rect.left, rect.width));
+                self._pos = x;
+                self._range.value = x / rect.width;
+                self._updateClip();
+            }
+
+            function onUp(e) {
+                self._dragging = false;
+                if (self._mapDragWasEnabled) map.dragging.enable();
+                L.DomUtil.removeClass(document.body, 'leaflet-sbs-dragging');
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+                document.removeEventListener('touchmove', onMove);
+                document.removeEventListener('touchend', onUp);
+            }
+
+            handle.addEventListener('mousedown', onDown);
+            handle.addEventListener('touchstart', onDown, { passive: false });
+
+            this._onDown = onDown;
+            this._onMove = onMove;
+            this._onUp = onUp;
+
+            map.on('move', this._updateClip, this);
+            map.on('layeradd layerremove', this._updateLayers, this);
+            map.on('resize', function () {
+                self._pos = map.getSize().x * self._range.value;
+                self._updateClip();
+            });
+            this._updateLayers();
+            return this;
+        },
+        remove: function () {
+            if (!this._map) return this;
+            if (this._leftLayer) this._leftLayer.getContainer().style.clip = '';
+            if (this._rightLayer) this._rightLayer.getContainer().style.clip = '';
+            this._map.off('move', this._updateClip, this);
+            this._map.off('layeradd layerremove', this._updateLayers, this);
+            L.DomUtil.remove(this._container);
+            this._map = null;
+            return this;
+        },
+        setLeftLayers: function (leftLayers) {
+            this._leftLayers = asArray(leftLayers);
+            this._updateLayers();
+            return this;
+        },
+        setRightLayers: function (rightLayers) {
+            this._rightLayers = asArray(rightLayers);
+            this._updateLayers();
+            return this;
+        },
+        _updateClip: function () {
+            var map = this._map;
+            var nw = map.containerPointToLayerPoint([0, 0]);
+            var se = map.containerPointToLayerPoint(map.getSize());
+            var dividerX = this._pos;
+            var clipX = nw.x + dividerX;
+            this._divider.style.left = dividerX + 'px';
+            this._handle.style.left = dividerX + 'px';
+            this.fire('dividermove', { x: dividerX });
+            var clipLeft = 'rect(' + [nw.y, clipX, se.y, nw.x].join('px,') + 'px)';
+            var clipRight = 'rect(' + [nw.y, se.x, se.y, clipX].join('px,') + 'px)';
+            if (this._leftLayer) this._leftLayer.getContainer().style.clip = clipLeft;
+            if (this._rightLayer) this._rightLayer.getContainer().style.clip = clipRight;
+        },
+        _updateLayers: function () {
+            if (!this._map) return this;
+            var prevLeft = this._leftLayer;
+            var prevRight = this._rightLayer;
+            this._leftLayer = this._rightLayer = null;
+            this._leftLayers.forEach(function (layer) {
+                if (this._map.hasLayer(layer)) this._leftLayer = layer;
+            }, this);
+            this._rightLayers.forEach(function (layer) {
+                if (this._map.hasLayer(layer)) this._rightLayer = layer;
+            }, this);
+            if (prevLeft !== this._leftLayer) {
+                prevLeft && this.fire('leftlayerremove', { layer: prevLeft });
+                this._leftLayer && this.fire('leftlayeradd', { layer: this._leftLayer });
+            }
+            if (prevRight !== this._rightLayer) {
+                prevRight && this.fire('rightlayerremove', { layer: prevRight });
+                this._rightLayer && this.fire('rightlayeradd', { layer: this._rightLayer });
+            }
+            this._updateClip();
+        }
+    });
+
+    L.control.sideBySide = function (leftLayers, rightLayers, options) {
+        return new L.Control.SideBySide(leftLayers, rightLayers, options);
+    };
+})();
+</script>
+
+<script>
+// ── Tile layers ──────────────────────────────────────────────────────
+var bounds = [[46.856640, -123.000267], [47.853702, -121.532723]];
+
+var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap',
+    minZoom: 6, maxZoom: 18
+});
+
+var imagery2020 = L.tileLayer('https://geospatialvisualizer.z13.web.core.windows.net/tiles/s2_20200828_seattle_tiles/{z}/{x}/{y}.png', {
+    tms: false,
+    minZoom: 8, maxNativeZoom: 14, maxZoom: 18,
+    bounds: bounds,
+    attribution: 'Sentinel-2 2020-08-28'
+});
+
+var imagery2024 = L.tileLayer('https://geospatialvisualizer.z13.web.core.windows.net/tiles/s2_20240720_seattle_tiles/{z}/{x}/{y}.png', {
+    tms: false,
+    minZoom: 8, maxNativeZoom: 14, maxZoom: 18,
+    bounds: bounds,
+    attribution: 'Sentinel-2 2024-07-20'
+});
+
+var diffLayer = L.tileLayer('https://geospatialvisualizer.z13.web.core.windows.net/tiles/aef_diff_pca3_seattle_tiles/{z}/{x}/{y}.png', {
+    tms: false,
+    minZoom: 8, maxNativeZoom: 14, maxZoom: 18,
+    bounds: bounds,
+    opacity: 0.85,
+    attribution: 'AEF Diff PCA-3'
+});
+
+var subsetBounds = [[47.494948959125395, -122.4439902982393], [47.65143476580883, -122.1941699604743]];
+
+var diffSubsetLayer = L.tileLayer('https://geospatialvisualizer.z13.web.core.windows.net/tiles/aef_diff_pca3_seattle_subset_tiles/{z}/{x}/{y}.png', {
+    tms: false,
+    minZoom: 8, maxNativeZoom: 14, maxZoom: 18,
+    bounds: subsetBounds,
+    opacity: 0.85,
+    attribution: 'AEF Diff PCA-3 (subset)'
+});
+
+var diffUrbanLayer = L.tileLayer('https://geospatialvisualizer.z13.web.core.windows.net/tiles/aef_diff_pca3_seattle_urbandiff_tiles/{z}/{x}/{y}.png', {
+    tms: false,
+    minZoom: 8, maxNativeZoom: 14, maxZoom: 18,
+    bounds: bounds,
+    opacity: 0.85,
+    attribution: 'AEF Diff PCA-3 (urban diff)'
+});
+
+// ── Map ──────────────────────────────────────────────────────────────
+var map = L.map('map', {
+    center: [47.355, -122.267],
+    zoom: 10,
+    minZoom: 6,
+    maxZoom: 18,
+    zoomControl: false,
+    layers: [osm, imagery2020, imagery2024]
+});
+
+// ── Side-by-side swipe ───────────────────────────────────────────────
+var sideBySide = L.control.sideBySide(imagery2020, imagery2024).addTo(map);
+
+// ── Controls ─────────────────────────────────────────────────────────
+L.control.zoom({ position: 'topleft' }).addTo(map);
+
+// Left panel label
+var leftLabel = L.control({ position: 'topleft' });
+leftLabel.onAdd = function() {
+    var div = L.DomUtil.create('div', 'panel-label');
+    div.innerHTML =
+        '<span class="title">2020-08-28</span>' +
+        '<span class="subtitle">Sentinel-2 TCI (pre)</span>';
+    return div;
+};
+leftLabel.addTo(map);
+
+// Right panel label
+var rightLabel = L.control({ position: 'topright' });
+rightLabel.onAdd = function() {
+    var div = L.DomUtil.create('div', 'panel-label');
+    div.innerHTML =
+        '<span class="title">2024-07-20</span>' +
+        '<span class="subtitle">Sentinel-2 TCI (post)</span>';
+    return div;
+};
+rightLabel.addTo(map);
+
+// Keyboard hints
+var hintCtl = L.control({ position: 'bottomleft' });
+hintCtl.onAdd = function() {
+    var div = L.DomUtil.create('div', 'kbd-hint');
+    div.innerHTML =
+        '<kbd>Space</kbd> Toggle diff overlay<br>' +
+        '<kbd>A</kbd> Swipe → show 2020 &nbsp; ' +
+        '<kbd>D</kbd> Swipe → show 2024 &nbsp; ' +
+        '<kbd>S</kbd> Swipe → center';
+    return div;
+};
+hintCtl.addTo(map);
+
+// ── Diff layer toggle ────────────────────────────────────────────────
+var overlayLayers = {
+    full:   diffLayer,
+    subset: diffSubsetLayer,
+    urban:  diffUrbanLayer
+};
+var selectedOverlay = 'full';
+var overlayVisible = false;
+
+var diffControl = L.control({ position: 'bottomright' });
+diffControl.onAdd = function(map) {
+    var div = L.DomUtil.create('div', 'diff-control');
+    div.innerHTML =
+        '<label><input type="checkbox" id="overlay-toggle"> Show diff overlay</label>' +
+        '<hr style="margin:6px 0;border:0;border-top:1px solid #e0e0e0">' +
+        '<label><input type="radio" name="overlay" value="full" checked> Full tile</label>' +
+        '<label style="margin-top:4px"><input type="radio" name="overlay" value="subset"> Subset (Seattle)</label>' +
+        '<label style="margin-top:4px"><input type="radio" name="overlay" value="urban"> Urban diff</label>';
+    L.DomEvent.disableClickPropagation(div);
+    return div;
+};
+diffControl.addTo(map);
+
+var overlayToggle = document.getElementById('overlay-toggle');
+var radioButtons = document.querySelectorAll('input[name="overlay"]');
+
+function showOverlay() {
+    overlayLayers[selectedOverlay].addTo(map);
+    overlayVisible = true;
+    overlayToggle.checked = true;
+}
+
+function hideOverlay() {
+    Object.keys(overlayLayers).forEach(function(k) {
+        if (map.hasLayer(overlayLayers[k])) map.removeLayer(overlayLayers[k]);
+    });
+    overlayVisible = false;
+    overlayToggle.checked = false;
+}
+
+function toggleDiff() {
+    if (overlayVisible) { hideOverlay(); } else { showOverlay(); }
+}
+
+overlayToggle.addEventListener('change', function() {
+    if (this.checked) { showOverlay(); } else { hideOverlay(); }
+});
+
+radioButtons.forEach(function(radio) {
+    radio.addEventListener('change', function() {
+        var wasVisible = overlayVisible;
+        hideOverlay();
+        selectedOverlay = this.value;
+        if (wasVisible) showOverlay();
+    });
+});
+
+// ── Keyboard shortcuts ───────────────────────────────────────────────
+document.addEventListener('keypress', function(e) {
+    var w = map.getSize().x;
+    if (e.key === ' ' || e.which === 32) {
+        e.preventDefault();
+        toggleDiff();
+    } else if (e.key === 'a' || e.which === 97) {
+        sideBySide._range.value = 0.02;
+        sideBySide._pos = w * 0.02;
+        sideBySide._updateClip();
+    } else if (e.key === 'd' || e.which === 100) {
+        sideBySide._range.value = 0.98;
+        sideBySide._pos = w * 0.98;
+        sideBySide._updateClip();
+    } else if (e.key === 's' || e.which === 115) {
+        sideBySide._range.value = 0.5;
+        sideBySide._pos = w * 0.5;
+        sideBySide._updateClip();
+    }
+});
+</script>
+</body>
+</html>
