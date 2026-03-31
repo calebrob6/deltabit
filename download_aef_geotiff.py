@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Download AEF embeddings over Seattle for a given year and save as a GeoTIFF.
+Download AEF embeddings over St. Louis (S2 tile T15SYC) and save as GeoTIFFs.
 
 The output is a multi-band (64-band) int8 GeoTIFF in EPSG:4326.
 
@@ -8,13 +8,15 @@ Requirements:
     pip install numpy xarray zarr rasterio affine pyproj s3fs rasterix
 
 Usage:
-    python download_aef_geotiff.py --year 2024
-    python download_aef_geotiff.py --year 2020 --output seattle_2020.tif
+    python download_aef_geotiff.py
+    python download_aef_geotiff.py --year 2020 2025
+    python download_aef_geotiff.py --year 2020 --output stlouis_2020.tif
 """
 
 import argparse
 import time
 import warnings
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
 import xarray as xr
 import zarr
@@ -31,12 +33,12 @@ warnings.filterwarnings("ignore", category=ZarrUserWarning)
 STORE_URL = "s3://us-west-2.opendata.source.coop/tge-labs/aef-mosaic"
 VALID_YEARS = list(range(2017, 2026))
 
-# Seattle / S2 tile T10TET bounding box in EPSG:4326
+# St. Louis / S2 tile T15SYC bounding box in EPSG:4326
 MINX, MINY, MAXX, MAXY = (
-    -123.00026735765742,
-    46.856639881437616,
-    -121.53272262323941,
-    47.85370184201499,
+    -90.7276358,
+    37.8168915,
+    -89.5547647,
+    38.8262817,
 )
 
 
@@ -125,19 +127,19 @@ def save_geotiff(data, output_path):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Download AEF embeddings over Seattle and save as GeoTIFF",
+        description="Download AEF embeddings over St. Louis and save as GeoTIFF",
     )
     parser.add_argument(
         "--year", "-y",
         type=int,
         nargs="+",
-        default=[2020, 2024],
-        help=f"Year(s) to download (valid: {VALID_YEARS[0]}-{VALID_YEARS[-1]}, default: 2020 2024)",
+        default=[2020, 2025],
+        help=f"Year(s) to download (valid: {VALID_YEARS[0]}-{VALID_YEARS[-1]}, default: 2020 2025)",
     )
     parser.add_argument(
         "--output", "-o",
         default=None,
-        help="Output path template (default: aef_seattle_{year}.tif)",
+        help="Output path template (default: aef_stlouis_{year}.tif)",
     )
     args = parser.parse_args()
 
@@ -148,15 +150,20 @@ def main():
     ds = open_aef_mosaic()
     embedding_ds = assign_rasterix_index(ds)
 
-    for year in args.year:
+    def _download_and_save(year):
         data = download_year(embedding_ds, year)
-
         if args.output and len(args.year) == 1:
             output_path = args.output
         else:
-            output_path = f"aef_seattle_{year}.tif"
-
+            output_path = f"aef_stlouis_{year}.tif"
         save_geotiff(data, output_path)
+        return year, output_path
+
+    with ThreadPoolExecutor(max_workers=len(args.year)) as pool:
+        futures = {pool.submit(_download_and_save, y): y for y in args.year}
+        for future in as_completed(futures):
+            year, path = future.result()
+            print(f"  Completed {year} → {path}")
 
     print("Done!")
 
