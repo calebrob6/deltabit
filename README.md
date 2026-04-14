@@ -96,6 +96,29 @@ GeoTIFF for the Seattle area.
 python generate_aef_map.py --output aef_diff_pca3.tif
 ```
 
+### `evaluate_cv.py`
+
+Evaluates change-detection performance using labeled points and AEF embedding
+diffs. Fits PCA on the full raster diff, saves explained variance ratios, and
+runs nested 10-fold cross-validation with logistic regression (inner 5-fold for
+C hyperparameter selection).
+
+```bash
+python evaluate_cv.py aef_2020.tif aef_2024.tif data/labels.geojson
+python evaluate_cv.py aef_2020.tif aef_2024.tif data/labels.geojson --variance-out ev.json
+python evaluate_cv.py aef_2020.tif aef_2024.tif data/labels.geojson --folds 5
+```
+
+Tests three feature sets (3-band PCA, 8-band PCA, full 64-band diff) and reports
+accuracy, F1, precision, recall, and best C per fold. See
+[EVALUATION.md](EVALUATION.md) for detailed results.
+
+## Data
+
+The `data/` directory contains labeled point datasets (GeoJSON) exported from
+the browser visualizer. Each file has Point features with a `label` property
+(`"change"` or `"nochange"`), used as ground truth for `evaluate_cv.py`.
+
 ## Visualizer
 
 The HTML viewers (`visualizer/`) are self-contained — no build step, no
