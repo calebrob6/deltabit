@@ -53,7 +53,7 @@ def open_aef_mosaic():
 
 
 def assign_rasterix_index(ds):
-    attrs = ds["embeddings"].attrs
+    attrs = ds.attrs
     affine = Affine(*attrs["spatial:transform"])
     crs = CRS.from_user_input(attrs["proj:code"])
     height, width = attrs["spatial:shape"]
@@ -100,15 +100,15 @@ def main():
     # Download data
     print("Computing 2024 data...")
     tic = time.time()
-    data_2024 = subset_2024.compute().values.astype(np.float32)
+    data_2024 = subset_2024.compute().values  # native int8
     print(f"  Done in {time.time() - tic:.2f}s, shape: {data_2024.shape}")
 
     print("Computing 2020 data...")
     tic = time.time()
-    data_2020 = subset_2020.compute().values.astype(np.float32)
+    data_2020 = subset_2020.compute().values  # native int8
     print(f"  Done in {time.time() - tic:.2f}s, shape: {data_2020.shape}")
 
-    # Save intermediate AEF rasters
+    # Save intermediate AEF rasters (int8, matching source)
     num_channels, height, width = data_2024.shape
     y_coords = subset_2024.y.values
     x_coords = subset_2024.x.values
@@ -118,30 +118,33 @@ def main():
     )
     intermediate_profile = {
         "driver": "GTiff",
-        "dtype": "float32",
+        "dtype": "int8",
         "width": width,
         "height": height,
         "count": num_channels,
         "crs": "EPSG:4326",
         "transform": intermediate_transform,
-        "compress": "deflate",
+        "compress": "zstd",
+        "tiled": True,
+        "blockxsize": 256,
+        "blockysize": 256,
+        "bigtiff": "yes",
     }
 
     aef_2024_path = args.output.replace(".tif", "_aef_2024.tif")
     print(f"Saving 2024 AEF raster to {aef_2024_path}...")
     with rasterio.open(aef_2024_path, "w", **intermediate_profile) as dst:
-        for i in range(num_channels):
-            dst.write(data_2024[i], i + 1)
+        dst.write(data_2024)
 
     aef_2020_path = args.output.replace(".tif", "_aef_2020.tif")
     print(f"Saving 2020 AEF raster to {aef_2020_path}...")
     with rasterio.open(aef_2020_path, "w", **intermediate_profile) as dst:
-        for i in range(num_channels):
-            dst.write(data_2020[i], i + 1)
+        dst.write(data_2020)
 
-    # Diff
+    # Diff (cast to float32 to avoid int8 overflow)
     print("Computing diff (2024 - 2020)...")
-    diff = data_2024 - data_2020
+    diff = data_2024.astype(np.float32) - data_2020.astype(np.float32)
+    del data_2024, data_2020
     print(f"  Diff shape: {diff.shape}")
 
     # PCA
@@ -156,7 +159,9 @@ def main():
     # Percentile normalize to [0, 1]
     print("Percentile normalizing...")
     pca_transformed = pca_transformed - np.percentile(pca_transformed, 1, axis=(0, 1))
-    pca_transformed = pca_transformed / np.percentile(pca_transformed, 99, axis=(0, 1))
+    scale = np.percentile(pca_transformed, 99, axis=(0, 1))
+    scale[scale == 0] = 1.0
+    pca_transformed = pca_transformed / scale
     pca_transformed = np.clip(pca_transformed, 0, 1)
 
     # Save as RGB GeoTIFF

@@ -1,91 +1,96 @@
-# In-Browser Embedding Viewer
+# Deltabit
 
-Interactive change-detection tool that runs entirely in the browser. Users swipe
-between two dates of Sentinel-2 imagery, label pixels as "change" or "no change",
-train a logistic regression model on AEF embeddings, and see predictions rendered
-in real time via WebGPU (or CPU fallback).
+Interactive change-detection tool for satellite imagery. Swipe between two dates
+of Sentinel-2 imagery, label pixels as "change" or "no change", train a logistic
+regression on [AEF](https://source.coop/tge-labs/aef-mosaic) embeddings, and see
+predictions in real time — all in the browser via WebGPU (or CPU fallback).
 
-## Repository Layout
+<p align="center">
+  <img src="https://img.shields.io/badge/python-3.10+-blue" alt="Python 3.10+">
+  <img src="https://img.shields.io/badge/WebGPU-supported-green" alt="WebGPU">
+</p>
 
-```
-├── download_aef_geotiff.py      # Download AEF embedding GeoTIFFs from the mosaic
-├── pca_diff.py                  # PCA reduction of the embedding diff between two years
-├── make_geotiff_tiles.py        # Slice any GeoTIFF into a {z}/{x}/{y} tile pyramid
-├── generate_aef_map.py          # End-to-end: download + diff + PCA-3 RGB in one script
-├── visualizer/
-│   ├── interactive.html          # Seattle viewer (2020 vs 2024)
-│   └── interactive_stlouis.html  # St. Louis viewer (2020 vs 2025)
-├── aef_stlouis_2020.tif          # 64-band AEF embeddings, St. Louis, 2020
-├── aef_stlouis_2025.tif          # 64-band AEF embeddings, St. Louis, 2025
-├── T15SYC_20200712T164849_TCI_10m.tif  # Sentinel-2 true-color, 2020-07-12
-├── T15SYC_20250701T164921_TCI_10m.tif  # Sentinel-2 true-color, 2025-07-01
-├── s2_2020-07-12_stlouis_tiles/  # Pre-built Sentinel-2 PNG tiles (2020)
-├── s2_2025-07-01_stlouis_tiles/  # Pre-built Sentinel-2 PNG tiles (2025)
-└── aef_index.gpkg                # AEF tile index GeoPackage
-```
-
-## Setup
+## Quick Start
 
 ```bash
-pip install numpy xarray zarr rasterio affine pyproj s3fs rasterix \
-            scikit-learn mercantile
+# Set up environment
+conda env create -f environment.yml
+conda activate in-browser-embedding
+
+# Download AEF embeddings for Seattle (2020 + 2025)
+python download_aef_geotiff.py
+
+# Compute embedding diff and reduce to PCA components
+python pca_diff.py aef_seattle_2020.tif aef_seattle_2025.tif -n 3
+
+# Generate web-mercator tile pyramid
+python make_geotiff_tiles.py aef_diff_pca3_seattle_2025_minus_seattle_2020.tif -o tiles/
+
+# Launch the viewer
+python -m http.server 8000
+# Open http://localhost:8000/visualizer/interactive.html?tiles=../tiles/{z}/{x}/{y}.tif
 ```
+
+## How It Works
+
+The pipeline downloads 64-band int8 AEF (AI Earth Foundation) embeddings from a
+public Zarr v3 mosaic on S3, computes a per-pixel temporal diff, reduces it via
+PCA, and tiles the result for browser consumption.
+
+```
+download_aef_geotiff.py     Fetch 64-band embeddings for any year (2017–2025)
+         │
+         ▼
+    pca_diff.py              Diff two years → PCA reduction
+         │
+         ▼
+ make_geotiff_tiles.py       Slice GeoTIFF → {z}/{x}/{y}.tif web-mercator pyramid
+         │
+         ▼
+  visualizer/*.html          Leaflet side-by-side viewer with labeling + in-browser ML
+```
+
+`generate_aef_map.py` wraps the first two steps into a single script.
 
 ## Scripts
 
-### `download_aef_geotiff.py` — Download AEF Embeddings
+### `download_aef_geotiff.py`
 
-Downloads 64-band AEF embedding GeoTIFFs from the public S3-hosted mosaic for the
-St. Louis area (Sentinel-2 tile T15SYC). Downloads multiple years in parallel.
-
-```bash
-# Download defaults (2020 and 2025)
-python download_aef_geotiff.py
-
-# Download specific years
-python download_aef_geotiff.py --year 2018 2022
-
-# Custom output path (single year only)
-python download_aef_geotiff.py --year 2020 --output my_aef_2020.tif
-```
-
-### `pca_diff.py` — PCA of Embedding Diff
-
-Computes the pixel-wise difference between two AEF GeoTIFFs and reduces the
-64-band diff to a smaller number of PCA components. Stores explained variance
-metadata in the output GeoTIFF tags.
+Downloads 64-band AEF embedding GeoTIFFs for the Seattle area (Sentinel-2 tile
+T10TET). Multiple years download in parallel.
 
 ```bash
-# Default: 8 components, auto-named output
-python pca_diff.py aef_stlouis_2020.tif aef_stlouis_2025.tif
-
-# Custom component count and output
-python pca_diff.py aef_stlouis_2020.tif aef_stlouis_2025.tif -n 3 -o diff_pca3.tif
-
-# Adjust PCA subsample rate
-python pca_diff.py aef_stlouis_2020.tif aef_stlouis_2025.tif --subsample 500
+python download_aef_geotiff.py                          # defaults: 2020 + 2025
+python download_aef_geotiff.py --year 2018 2022         # specific years
+python download_aef_geotiff.py -y 2020 -o my_2020.tif   # custom output
 ```
 
-### `make_geotiff_tiles.py` — Tile Pyramid Generator
+### `pca_diff.py`
+
+Pixel-wise diff of two AEF GeoTIFFs → PCA reduction. Stores explained variance
+in GeoTIFF metadata tags.
+
+```bash
+python pca_diff.py aef_seattle_2020.tif aef_seattle_2025.tif           # 8 components
+python pca_diff.py aef_seattle_2020.tif aef_seattle_2025.tif -n 3      # 3 components
+python pca_diff.py aef_seattle_2020.tif aef_seattle_2025.tif --subsample 500
+```
+
+### `make_geotiff_tiles.py`
 
 Slices any GeoTIFF into a web-mercator `{z}/{x}/{y}.tif` tile pyramid using
-multiprocessing and shared memory for speed.
+multiprocessing + shared memory.
 
 ```bash
-# Default: zoom 8–14, output to tiles/
-python make_geotiff_tiles.py input.tif
-
-# Custom zoom range and output directory
-python make_geotiff_tiles.py input.tif -o my_tiles/ --zoom-min 10 --zoom-max 16
-
-# Fewer workers for constrained environments
-python make_geotiff_tiles.py input.tif --workers 8
+python make_geotiff_tiles.py input.tif                               # zoom 8–14
+python make_geotiff_tiles.py input.tif -o out/ --zoom-min 10 --zoom-max 16
+python make_geotiff_tiles.py input.tif --workers 8                   # fewer CPUs
 ```
 
-### `generate_aef_map.py` — End-to-End Diff Map
+### `generate_aef_map.py`
 
-All-in-one script that downloads two years of AEF data, computes the diff, and
-produces a PCA-3 RGB GeoTIFF. Currently configured for the Seattle area.
+All-in-one: downloads two years of AEF data, diffs, and outputs a PCA-3 RGB
+GeoTIFF for the Seattle area.
 
 ```bash
 python generate_aef_map.py --output aef_diff_pca3.tif
@@ -93,17 +98,9 @@ python generate_aef_map.py --output aef_diff_pca3.tif
 
 ## Visualizer
 
-The interactive HTML viewers use Leaflet with a side-by-side swipe control to
-compare Sentinel-2 imagery from two dates. Users can:
-
-1. **Swipe** between the two dates to visually inspect changes
-2. **Label** pixels as "change" or "no change" by clicking on the map
-3. **Train** a logistic regression model on the labelled AEF embeddings
-4. **Predict** across all loaded tiles and visualize results as a heatmap or
-   binary overlay (via WebGPU or CPU)
-
-Open `visualizer/interactive_stlouis.html` in a browser (served via a web
-server, or pass an embedding tile URL as a `?tiles=` query parameter).
+The HTML viewers (`visualizer/`) are self-contained — no build step, no
+bundler. They use Leaflet + GeoTIFF.js and load embedding tiles as
+`{z}/{x}/{y}.tif` pyramids. Override the tile URL with `?tiles=`.
 
 ### Keyboard Shortcuts
 
@@ -119,19 +116,8 @@ server, or pass an embedding tile URL as a `?tiles=` query parameter).
 | `H`   | Toggle heatmap overlay    |
 | `G`   | Train model               |
 
-## End-to-End Workflow
+## Data Source
 
-```bash
-# 1. Download AEF embeddings for 2020 and 2025
-python download_aef_geotiff.py
-
-# 2. Compute PCA diff
-python pca_diff.py aef_stlouis_2020.tif aef_stlouis_2025.tif
-
-# 3. Generate tile pyramid for the embedding diff
-python make_geotiff_tiles.py aef_diff_pca8_stlouis_2025_minus_stlouis_2020.tif -o diff_tiles/
-
-# 4. Open the viewer (serve the repo directory with any HTTP server)
-#    Then visit: http://localhost:8000/visualizer/interactive_stlouis.html?tiles=../diff_tiles/{z}/{x}/{y}.tif
-python -m http.server 8000
-```
+Embeddings come from the [AEF Mosaic](https://source.coop/tge-labs/aef-mosaic)
+on Source Cooperative — anonymous S3 access, no credentials needed. Coverage
+spans 2017–2025 at 10 m resolution (Sentinel-2 grid).

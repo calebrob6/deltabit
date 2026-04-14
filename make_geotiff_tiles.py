@@ -51,6 +51,17 @@ def parse_args():
     return parser.parse_args()
 
 
+def _init_worker(shm_name, src_shape, src_dtype, src_transform, src_crs, out_dir):
+    """Initializer for pool workers — sets module-level globals."""
+    global _SHM_NAME, _SRC_SHAPE, _SRC_DTYPE, _SRC_TRANSFORM, _SRC_CRS, _OUT_DIR
+    _SHM_NAME = shm_name
+    _SRC_SHAPE = src_shape
+    _SRC_DTYPE = src_dtype
+    _SRC_TRANSFORM = src_transform
+    _SRC_CRS = src_crs
+    _OUT_DIR = out_dir
+
+
 def process_tile(tile):
     shm_r = shared_memory.SharedMemory(name=_SHM_NAME)
     src_arr = np.ndarray(_SRC_SHAPE, dtype=_SRC_DTYPE, buffer=shm_r.buf)
@@ -60,7 +71,7 @@ def process_tile(tile):
         bounds.left, bounds.bottom, bounds.right, bounds.top,
         TILE_SIZE, TILE_SIZE,
     )
-    dst_data = np.zeros((_SRC_SHAPE[0], TILE_SIZE, TILE_SIZE), dtype=np.uint8)
+    dst_data = np.zeros((_SRC_SHAPE[0], TILE_SIZE, TILE_SIZE), dtype=_SRC_DTYPE)
 
     reproject(
         source=src_arr,
@@ -77,7 +88,7 @@ def process_tile(tile):
     tile_path = os.path.join(_OUT_DIR, str(tile.z), str(tile.x), f"{tile.y}.tif")
     profile = {
         "driver": "GTiff",
-        "dtype": "uint8",
+        "dtype": _SRC_DTYPE,
         "width": TILE_SIZE,
         "height": TILE_SIZE,
         "count": _SRC_SHAPE[0],
@@ -131,7 +142,11 @@ def main():
         os.makedirs(d, exist_ok=True)
 
     t0 = time.time()
-    with Pool(args.workers) as pool:
+    with Pool(
+        args.workers,
+        initializer=_init_worker,
+        initargs=(_SHM_NAME, _SRC_SHAPE, _SRC_DTYPE, _SRC_TRANSFORM, _SRC_CRS, _OUT_DIR),
+    ) as pool:
         for i, z in enumerate(pool.imap_unordered(process_tile, all_tiles, chunksize=32), 1):
             if i % 500 == 0 or i == len(all_tiles):
                 elapsed = time.time() - t0

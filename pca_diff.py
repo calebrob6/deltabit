@@ -92,7 +92,7 @@ def main():
 
     profile.update(
         count=args.n_components, dtype="float32",
-        compress="deflate", predictor=2,
+        compress="deflate", predictor=2, bigtiff="yes",
     )
     print(f"Writing {args.output}…")
     with rasterio.open(args.output, "w", **profile) as dst:
