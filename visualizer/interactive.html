@@ -171,7 +171,7 @@
 
 <div id="header">
     <div class="header-col">Interactive Embedding Viewer</div>
-    <div class="header-col center">Seattle — Sentinel-2 (2020 vs 2024)</div>
+    <div class="header-col center" id="header-center">Sentinel-2 Change Detection</div>
     <div class="header-col right">Click to label · Train · Predict</div>
 </div>
 
@@ -299,6 +299,14 @@ var urlParams = new URLSearchParams(window.location.search);
 var EMBEDDING_TILE_URL = urlParams.get('tiles') || 'https://geospatialvisualizer.z13.web.core.windows.net/tiles/aef_seattle_2024-2020_diff_tiles/{z}/{x}/{y}.tif';
 var EMB_MIN_ZOOM = parseInt(urlParams.get('minZoom')) || 8;
 var EMB_MAX_NATIVE_ZOOM = parseInt(urlParams.get('maxZoom')) || 14;
+
+// S2 imagery tile URLs (override with ?left= and ?right= query params)
+var LEFT_TILE_URL = urlParams.get('left') || 'https://geospatialvisualizer.z13.web.core.windows.net/tiles/s2_20200828_seattle_tiles/{z}/{x}/{y}.png';
+var RIGHT_TILE_URL = urlParams.get('right') || 'https://geospatialvisualizer.z13.web.core.windows.net/tiles/s2_20240720_seattle_tiles/{z}/{x}/{y}.png';
+var LEFT_LABEL = urlParams.get('leftLabel') || '2020-08-28';
+var RIGHT_LABEL = urlParams.get('rightLabel') || '2024-07-20';
+var MAP_CENTER_LAT = parseFloat(urlParams.get('lat')) || 47.355;
+var MAP_CENTER_LNG = parseFloat(urlParams.get('lng')) || -122.267;
 
 // ── Utilities ───────────────────────────────────────────────────────
 function showToast(msg, duration) {
@@ -762,14 +770,14 @@ var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '© OpenStreetMap', minZoom: 6, maxZoom: 18
 });
 
-var imagery2020 = L.tileLayer('https://geospatialvisualizer.z13.web.core.windows.net/tiles/s2_20200828_seattle_tiles/{z}/{x}/{y}.png', {
+var imagery2020 = L.tileLayer(LEFT_TILE_URL, {
     tms: false, minZoom: 8, maxNativeZoom: 14, maxZoom: 18,
-    bounds: bounds, attribution: 'Sentinel-2 2020-08-28'
+    bounds: bounds, attribution: 'Sentinel-2 ' + LEFT_LABEL
 });
 
-var imagery2024 = L.tileLayer('https://geospatialvisualizer.z13.web.core.windows.net/tiles/s2_20240720_seattle_tiles/{z}/{x}/{y}.png', {
+var imagery2024 = L.tileLayer(RIGHT_TILE_URL, {
     tms: false, minZoom: 8, maxNativeZoom: 14, maxZoom: 18,
-    bounds: bounds, attribution: 'Sentinel-2 2024-07-20'
+    bounds: bounds, attribution: 'Sentinel-2 ' + RIGHT_LABEL
 });
 
 var diffLayer = L.tileLayer('https://geospatialvisualizer.z13.web.core.windows.net/tiles/aef_diff_pca3_seattle_tiles/{z}/{x}/{y}.png', {
@@ -784,7 +792,7 @@ var diffUrbanLayer = L.tileLayer('https://geospatialvisualizer.z13.web.core.wind
 
 // ── Map ─────────────────────────────────────────────────────────────
 var map = L.map('map', {
-    center: [47.355, -122.267], zoom: 10,
+    center: [MAP_CENTER_LAT, MAP_CENTER_LNG], zoom: 10,
     minZoom: 6, maxZoom: 18, zoomControl: false,
     layers: [osm, imagery2020, imagery2024]
 });
@@ -825,7 +833,7 @@ var sideBySide = L.control.sideBySide(imagery2020, imagery2024).addTo(map);
 var leftLabel = L.control({ position: 'topleft' });
 leftLabel.onAdd = function () {
     var div = L.DomUtil.create('div', 'panel-label');
-    div.innerHTML = '<span class="title">2020-08-28</span><span class="subtitle">Sentinel-2 TCI (pre)</span>';
+    div.innerHTML = '<span class="title">' + LEFT_LABEL + '</span><span class="subtitle">Sentinel-2 TCI (pre)</span>';
     return div;
 };
 leftLabel.addTo(map);
@@ -833,7 +841,7 @@ leftLabel.addTo(map);
 var rightLabel = L.control({ position: 'topright' });
 rightLabel.onAdd = function () {
     var div = L.DomUtil.create('div', 'panel-label');
-    div.innerHTML = '<span class="title">2024-07-20</span><span class="subtitle">Sentinel-2 TCI (post)</span>';
+    div.innerHTML = '<span class="title">' + RIGHT_LABEL + '</span><span class="subtitle">Sentinel-2 TCI (post)</span>';
     return div;
 };
 rightLabel.addTo(map);
@@ -1259,6 +1267,10 @@ document.addEventListener('keydown', function (e) {
 if (EMBEDDING_TILE_URL) {
     loadEmbeddingTiles(EMBEDDING_TILE_URL);
 }
+
+// ── Update header with configured labels ────────────────────────────
+document.getElementById('header-center').textContent =
+    'Sentinel-2 (' + LEFT_LABEL + ' vs ' + RIGHT_LABEL + ')';
 </script>
 </body>
 </html>

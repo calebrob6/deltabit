@@ -29,7 +29,7 @@ TILE_SIZE = 256
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Tile a GeoTIFF into a web-mercator {z}/{x}/{y}.tif pyramid",
+        description="Tile a GeoTIFF into a web-mercator {z}/{x}/{y}.tif (or .png) pyramid",
     )
     parser.add_argument("input", help="Input GeoTIFF file")
     parser.add_argument(
@@ -48,18 +48,23 @@ def parse_args():
         "--workers", type=int, default=64,
         help="Number of parallel workers (default: 64)",
     )
+    parser.add_argument(
+        "--png", action="store_true",
+        help="Output PNG tiles instead of GeoTIFF (for RGB imagery)",
+    )
     return parser.parse_args()
 
 
-def _init_worker(shm_name, src_shape, src_dtype, src_transform, src_crs, out_dir):
+def _init_worker(shm_name, src_shape, src_dtype, src_transform, src_crs, out_dir, use_png):
     """Initializer for pool workers — sets module-level globals."""
-    global _SHM_NAME, _SRC_SHAPE, _SRC_DTYPE, _SRC_TRANSFORM, _SRC_CRS, _OUT_DIR
+    global _SHM_NAME, _SRC_SHAPE, _SRC_DTYPE, _SRC_TRANSFORM, _SRC_CRS, _OUT_DIR, _USE_PNG
     _SHM_NAME = shm_name
     _SRC_SHAPE = src_shape
     _SRC_DTYPE = src_dtype
     _SRC_TRANSFORM = src_transform
     _SRC_CRS = src_crs
     _OUT_DIR = out_dir
+    _USE_PNG = use_png
 
 
 def process_tile(tile):
@@ -85,20 +90,37 @@ def process_tile(tile):
         dst_nodata=0,
     )
 
-    tile_path = os.path.join(_OUT_DIR, str(tile.z), str(tile.x), f"{tile.y}.tif")
-    profile = {
-        "driver": "GTiff",
-        "dtype": _SRC_DTYPE,
-        "width": TILE_SIZE,
-        "height": TILE_SIZE,
-        "count": _SRC_SHAPE[0],
-        "crs": WEB_MERCATOR,
-        "transform": dst_transform,
-        "nodata": 0,
-        "compress": "deflate",
-    }
+    tile_ext = ".png" if _USE_PNG else ".tif"
+    tile_path = os.path.join(_OUT_DIR, str(tile.z), str(tile.x), f"{tile.y}{tile_ext}")
+
+    if _USE_PNG:
+        profile = {
+            "driver": "PNG",
+            "dtype": "uint8",
+            "width": TILE_SIZE,
+            "height": TILE_SIZE,
+            "count": min(_SRC_SHAPE[0], 4),  # RGB or RGBA
+        }
+        # Clamp to uint8 for PNG
+        write_data = dst_data[:min(_SRC_SHAPE[0], 4)]
+        if _SRC_DTYPE != np.dtype("uint8"):
+            write_data = np.clip(write_data, 0, 255).astype("uint8")
+    else:
+        profile = {
+            "driver": "GTiff",
+            "dtype": _SRC_DTYPE,
+            "width": TILE_SIZE,
+            "height": TILE_SIZE,
+            "count": _SRC_SHAPE[0],
+            "crs": WEB_MERCATOR,
+            "transform": dst_transform,
+            "nodata": 0,
+            "compress": "deflate",
+        }
+        write_data = dst_data
+
     with rasterio.open(tile_path, "w", **profile) as dst:
-        dst.write(dst_data)
+        dst.write(write_data)
 
     shm_r.close()
     return tile.z
@@ -107,8 +129,9 @@ def process_tile(tile):
 def main():
     args = parse_args()
 
-    global _SHM_NAME, _SRC_SHAPE, _SRC_DTYPE, _SRC_TRANSFORM, _SRC_CRS, _OUT_DIR
+    global _SHM_NAME, _SRC_SHAPE, _SRC_DTYPE, _SRC_TRANSFORM, _SRC_CRS, _OUT_DIR, _USE_PNG
     _OUT_DIR = args.output_dir
+    _USE_PNG = args.png
 
     print(f"Reading {args.input}…")
     with rasterio.open(args.input) as src:
@@ -145,7 +168,7 @@ def main():
     with Pool(
         args.workers,
         initializer=_init_worker,
-        initargs=(_SHM_NAME, _SRC_SHAPE, _SRC_DTYPE, _SRC_TRANSFORM, _SRC_CRS, _OUT_DIR),
+        initargs=(_SHM_NAME, _SRC_SHAPE, _SRC_DTYPE, _SRC_TRANSFORM, _SRC_CRS, _OUT_DIR, _USE_PNG),
     ) as pool:
         for i, z in enumerate(pool.imap_unordered(process_tile, all_tiles, chunksize=32), 1):
             if i % 500 == 0 or i == len(all_tiles):

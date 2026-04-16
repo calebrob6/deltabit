@@ -157,7 +157,7 @@
 
 <div id="header">
     <div class="header-col">Alpha Earth Embedding Diff</div>
-    <div class="header-col center">Seattle — Sentinel-2 (2020 vs 2024)</div>
+    <div class="header-col center" id="header-center">Sentinel-2 Change Detection</div>
     <div class="header-col right">PCA-3 of Δ Embeddings</div>
 </div>
 
@@ -313,6 +313,15 @@
 </script>
 
 <script>
+// ── Configuration ───────────────────────────────────────────────────
+var urlParams = new URLSearchParams(window.location.search);
+var LEFT_TILE_URL = urlParams.get('left') || 'https://geospatialvisualizer.z13.web.core.windows.net/tiles/s2_20200828_seattle_tiles/{z}/{x}/{y}.png';
+var RIGHT_TILE_URL = urlParams.get('right') || 'https://geospatialvisualizer.z13.web.core.windows.net/tiles/s2_20240720_seattle_tiles/{z}/{x}/{y}.png';
+var LEFT_LABEL = urlParams.get('leftLabel') || '2020-08-28';
+var RIGHT_LABEL = urlParams.get('rightLabel') || '2024-07-20';
+var MAP_CENTER_LAT = parseFloat(urlParams.get('lat')) || 47.355;
+var MAP_CENTER_LNG = parseFloat(urlParams.get('lng')) || -122.267;
+
 // ── Tile layers ──────────────────────────────────────────────────────
 var bounds = [[46.856640, -123.000267], [47.853702, -121.532723]];
 
@@ -321,18 +330,18 @@ var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     minZoom: 6, maxZoom: 18
 });
 
-var imagery2020 = L.tileLayer('https://geospatialvisualizer.z13.web.core.windows.net/tiles/s2_20200828_seattle_tiles/{z}/{x}/{y}.png', {
+var imagery2020 = L.tileLayer(LEFT_TILE_URL, {
     tms: false,
     minZoom: 8, maxNativeZoom: 14, maxZoom: 18,
     bounds: bounds,
-    attribution: 'Sentinel-2 2020-08-28'
+    attribution: 'Sentinel-2 ' + LEFT_LABEL
 });
 
-var imagery2024 = L.tileLayer('https://geospatialvisualizer.z13.web.core.windows.net/tiles/s2_20240720_seattle_tiles/{z}/{x}/{y}.png', {
+var imagery2024 = L.tileLayer(RIGHT_TILE_URL, {
     tms: false,
     minZoom: 8, maxNativeZoom: 14, maxZoom: 18,
     bounds: bounds,
-    attribution: 'Sentinel-2 2024-07-20'
+    attribution: 'Sentinel-2 ' + RIGHT_LABEL
 });
 
 var diffLayer = L.tileLayer('https://geospatialvisualizer.z13.web.core.windows.net/tiles/aef_diff_pca3_seattle_tiles/{z}/{x}/{y}.png', {
@@ -363,7 +372,7 @@ var diffUrbanLayer = L.tileLayer('https://geospatialvisualizer.z13.web.core.wind
 
 // ── Map ──────────────────────────────────────────────────────────────
 var map = L.map('map', {
-    center: [47.355, -122.267],
+    center: [MAP_CENTER_LAT, MAP_CENTER_LNG],
     zoom: 10,
     minZoom: 6,
     maxZoom: 18,
@@ -382,7 +391,7 @@ var leftLabel = L.control({ position: 'topleft' });
 leftLabel.onAdd = function() {
     var div = L.DomUtil.create('div', 'panel-label');
     div.innerHTML =
-        '<span class="title">2020-08-28</span>' +
+        '<span class="title">' + LEFT_LABEL + '</span>' +
         '<span class="subtitle">Sentinel-2 TCI (pre)</span>';
     return div;
 };
@@ -393,11 +402,14 @@ var rightLabel = L.control({ position: 'topright' });
 rightLabel.onAdd = function() {
     var div = L.DomUtil.create('div', 'panel-label');
     div.innerHTML =
-        '<span class="title">2024-07-20</span>' +
+        '<span class="title">' + RIGHT_LABEL + '</span>' +
         '<span class="subtitle">Sentinel-2 TCI (post)</span>';
     return div;
 };
 rightLabel.addTo(map);
+
+document.getElementById('header-center').textContent =
+    'Sentinel-2 (' + LEFT_LABEL + ' vs ' + RIGHT_LABEL + ')';
 
 // Keyboard hints
 var hintCtl = L.control({ position: 'bottomleft' });

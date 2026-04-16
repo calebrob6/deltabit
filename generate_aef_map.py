@@ -1,13 +1,13 @@
-#!/usr/bin/env python3                                                                                                                                                                                  [112/209]
+#!/usr/bin/env python3
 """
-Generate an AEF embedding diff (2024 - 2020) PCA3 RGB GeoTIFF
-over the bounds of a Sentinel-2 T10TET tile (Seattle area).
+Generate an AEF embedding diff PCA3 RGB GeoTIFF for any Sentinel-2 MGRS tile.
 
 Requirements:
-    pip install numpy xarray zarr rasterix scikit-learn rasterio affine pyproj s3fs
+    pip install numpy xarray zarr rasterix scikit-learn rasterio affine pyproj s3fs mgrs
 
 Usage:
-    python generate_aef_diff.py [--output aef_diff_pca3_seattle.tif]
+    python generate_aef_map.py --tile T10TET
+    python generate_aef_map.py --tile 33UUP --output aef_diff_pca3_33UUP.tif
 """
 
 import argparse
@@ -25,18 +25,11 @@ from rasterix import RasterIndex
 from affine import Affine
 from pyproj import CRS
 
+from mgrs_utils import mgrs_tile_bounds, parse_mgrs_tile_id
+
 warnings.filterwarnings("ignore", category=ZarrUserWarning)
 
 STORE_URL = "s3://us-west-2.opendata.source.coop/tge-labs/aef-mosaic"
-
-# Bounding box of S2 tile T10TET in EPSG:4326
-# (derived from the 10980x10980 UTM10N tile)
-MINX, MINY, MAXX, MAXY = (
-    -123.00026735765742,
-    46.856639881437616,
-    -121.53272262323941,
-    47.85370184201499,
-)
 
 
 def open_aef_mosaic():
@@ -71,47 +64,69 @@ def assign_rasterix_index(ds):
 def main():
     parser = argparse.ArgumentParser(description="Generate AEF diff PCA3 GeoTIFF")
     parser.add_argument(
+        "--tile", "-t",
+        default="T10TET",
+        help="Sentinel-2 MGRS tile ID (e.g. T10TET, 33UUP). Default: T10TET (Seattle)",
+    )
+    parser.add_argument(
         "--output", "-o",
-        default="aef_diff_pca3_seattle.tif",
-        help="Output GeoTIFF path (default: aef_diff_pca3_seattle.tif)",
+        default=None,
+        help="Output GeoTIFF path (default: aef_diff_pca3_{tile}.tif)",
+    )
+    parser.add_argument(
+        "--year-a", type=int, default=2020,
+        help="Earlier year (default: 2020)",
+    )
+    parser.add_argument(
+        "--year-b", type=int, default=2024,
+        help="Later year (default: 2024)",
     )
     args = parser.parse_args()
+
+    tile_id = parse_mgrs_tile_id(args.tile)
+    if args.output is None:
+        args.output = f"aef_diff_pca3_{tile_id}.tif"
+
+    print(f"Computing bounding box for MGRS tile {tile_id}...")
+    bounds = mgrs_tile_bounds(tile_id)
+    minx, miny, maxx, maxy = bounds
+    print(f"  Bounds (EPSG:4326): {bounds}")
 
     ds = open_aef_mosaic()
     embedding_ds = assign_rasterix_index(ds)
 
-    # Subset for 2024 and 2020
-    print("Subsetting 2024 embeddings...")
-    subset_2024 = embedding_ds.sel(
-        x=slice(MINX, MAXX),
-        y=slice(MAXY, MINY),
-        time=2024,
+    # Subset for year_b and year_a
+    print(f"Subsetting {args.year_b} embeddings...")
+    subset_b = embedding_ds.sel(
+        x=slice(minx, maxx),
+        y=slice(maxy, miny),
+        time=args.year_b,
     )
-    print(f"  Shape: {subset_2024.shape}")
+    print(f"  Shape: {subset_b.shape}")
 
-    print("Subsetting 2020 embeddings...")
-    subset_2020 = embedding_ds.sel(
-        x=slice(MINX, MAXX),
-        y=slice(MAXY, MINY),
-        time=2020,
+    print(f"Subsetting {args.year_a} embeddings...")
+    subset_a = embedding_ds.sel(
+        x=slice(minx, maxx),
+        y=slice(maxy, miny),
+        time=args.year_a,
     )
-    print(f"  Shape: {subset_2020.shape}")
+    print(f"  Shape: {subset_a.shape}")
 
     # Download data
-    print("Computing 2024 data...")
+    print(f"Computing {args.year_b} data...")
     tic = time.time()
-    data_2024 = subset_2024.compute().values  # native int8
-    print(f"  Done in {time.time() - tic:.2f}s, shape: {data_2024.shape}")
+    data_b = subset_b.compute().values  # native int8
+    print(f"  Done in {time.time() - tic:.2f}s, shape: {data_b.shape}")
 
-    print("Computing 2020 data...")
+    print(f"Computing {args.year_a} data...")
     tic = time.time()
-    data_2020 = subset_2020.compute().values  # native int8
-    print(f"  Done in {time.time() - tic:.2f}s, shape: {data_2020.shape}")
+    data_a = subset_a.compute().values  # native int8
+    print(f"  Done in {time.time() - tic:.2f}s, shape: {data_a.shape}")
 
     # Save intermediate AEF rasters (int8, matching source)
-    num_channels, height, width = data_2024.shape
-    y_coords = subset_2024.y.values
-    x_coords = subset_2024.x.values
+    num_channels, height, width = data_b.shape
+    y_coords = subset_b.y.values
+    x_coords = subset_b.x.values
     intermediate_transform = from_bounds(
         x_coords.min(), y_coords.min(), x_coords.max(), y_coords.max(),
         width, height,
@@ -131,20 +146,20 @@ def main():
         "bigtiff": "yes",
     }
 
-    aef_2024_path = args.output.replace(".tif", "_aef_2024.tif")
-    print(f"Saving 2024 AEF raster to {aef_2024_path}...")
-    with rasterio.open(aef_2024_path, "w", **intermediate_profile) as dst:
-        dst.write(data_2024)
+    aef_b_path = args.output.replace(".tif", f"_aef_{args.year_b}.tif")
+    print(f"Saving {args.year_b} AEF raster to {aef_b_path}...")
+    with rasterio.open(aef_b_path, "w", **intermediate_profile) as dst:
+        dst.write(data_b)
 
-    aef_2020_path = args.output.replace(".tif", "_aef_2020.tif")
-    print(f"Saving 2020 AEF raster to {aef_2020_path}...")
-    with rasterio.open(aef_2020_path, "w", **intermediate_profile) as dst:
-        dst.write(data_2020)
+    aef_a_path = args.output.replace(".tif", f"_aef_{args.year_a}.tif")
+    print(f"Saving {args.year_a} AEF raster to {aef_a_path}...")
+    with rasterio.open(aef_a_path, "w", **intermediate_profile) as dst:
+        dst.write(data_a)
 
     # Diff (cast to float32 to avoid int8 overflow)
-    print("Computing diff (2024 - 2020)...")
-    diff = data_2024.astype(np.float32) - data_2020.astype(np.float32)
-    del data_2024, data_2020
+    print(f"Computing diff ({args.year_b} - {args.year_a})...")
+    diff = data_b.astype(np.float32) - data_a.astype(np.float32)
+    del data_b, data_a
     print(f"  Diff shape: {diff.shape}")
 
     # PCA

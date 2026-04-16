@@ -13,6 +13,8 @@ dependencies:
   - s3fs
   - scikit-learn
   - mercantile
+  - mgrs
+  - pystac-client
   - pip
   - pip:
       - rasterix
