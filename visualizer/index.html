@@ -189,6 +189,8 @@
             this._divider = L.DomUtil.create('div', 'leaflet-sbs-divider', container);
             this._range = { value: 0.5 };
             var handle = this._handle = L.DomUtil.create('div', 'leaflet-sbs-handle', container);
+            L.DomEvent.disableClickPropagation(handle);
+            L.DomEvent.on(handle, 'mouseup touchend click dblclick', L.DomEvent.stopPropagation);
             this._dragging = false;
             var self = this;
             function onDown(e) {
