@@ -192,16 +192,36 @@
             L.DomEvent.on(handle, 'mouseup touchend click dblclick', L.DomEvent.stopPropagation);
             this._dragging = false;
             var self = this;
+            function removeClickSuppressor() {
+                if (!self._suppressClickFromHandle) return;
+                document.removeEventListener('click', onClick, true);
+                clearTimeout(self._suppressClickTimer);
+                self._suppressClickTimer = null;
+                self._suppressClickFromHandle = false;
+            }
+            function onClick(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                removeClickSuppressor();
+            }
+            function suppressNextClick() {
+                removeClickSuppressor();
+                self._suppressClickFromHandle = true;
+                document.addEventListener('click', onClick, true);
+            }
             function onDown(e) {
                 e.preventDefault(); e.stopPropagation();
+                suppressNextClick();
                 self._dragging = true;
                 self._mapDragWasEnabled = map.dragging.enabled();
                 map.dragging.disable();
                 L.DomUtil.addClass(document.body, 'leaflet-sbs-dragging');
                 document.addEventListener('mousemove', onMove);
-                document.addEventListener('mouseup', onUp);
+                // Capture release events before the handle stops their propagation.
+                document.addEventListener('mouseup', onUp, true);
                 document.addEventListener('touchmove', onMove, { passive: false });
-                document.addEventListener('touchend', onUp);
+                document.addEventListener('touchend', onUp, true);
+                document.addEventListener('touchcancel', onUp, true);
             }
             function onMove(e) {
                 if (!self._dragging) return;
@@ -218,13 +238,19 @@
                 if (self._mapDragWasEnabled) map.dragging.enable();
                 L.DomUtil.removeClass(document.body, 'leaflet-sbs-dragging');
                 document.removeEventListener('mousemove', onMove);
-                document.removeEventListener('mouseup', onUp);
+                document.removeEventListener('mouseup', onUp, true);
                 document.removeEventListener('touchmove', onMove);
-                document.removeEventListener('touchend', onUp);
+                document.removeEventListener('touchend', onUp, true);
+                document.removeEventListener('touchcancel', onUp, true);
+                if (self._suppressClickFromHandle) {
+                    clearTimeout(self._suppressClickTimer);
+                    self._suppressClickTimer = setTimeout(removeClickSuppressor, 750);
+                }
             }
             handle.addEventListener('mousedown', onDown);
             handle.addEventListener('touchstart', onDown, { passive: false });
             this._onDown = onDown; this._onMove = onMove; this._onUp = onUp;
+            this._removeClickSuppressor = removeClickSuppressor;
             map.on('move', this._updateClip, this);
             map.on('layeradd layerremove', this._updateLayers, this);
             map.on('resize', function () {
@@ -240,6 +266,7 @@
             if (this._rightLayer) this._rightLayer.getContainer().style.clip = '';
             this._map.off('move', this._updateClip, this);
             this._map.off('layeradd layerremove', this._updateLayers, this);
+            if (this._removeClickSuppressor) this._removeClickSuppressor();
             L.DomUtil.remove(this._container);
             this._map = null;
             return this;
